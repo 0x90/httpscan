@@ -8,15 +8,20 @@
 __author__ = '090h'
 __license__ = 'GPL'
 
+
+from logging import StreamHandler, FileHandler, Formatter, getLogger, INFO, DEBUG
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from multiprocessing.dummy import Pool as ThreadPool, Lock
 from pprint import pprint
-from sys import exit, stdout
+from sys import exit
 from os import path
-import logging
 
+from csv import writer, QUOTE_ALL
+from json import dumps
+import io
+
+# External dependencied
 from requests import options, get, head
-
 
 
 class Output(object):
@@ -25,44 +30,64 @@ class Output(object):
         self.args = args
         self.lock = Lock()
 
-        # logging.basicConfig()
-        self.logger = logging.getLogger('httpscan_logger')
-        # for h in list(self.logger.handlers):
-        #     self.logger.removeHandler(h)
-
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
-        # logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
-
+        # Logger init
+        self.logger = getLogger('httpscan_logger')
         if args.debug:
             print('Enabling debug logging.')
-            self.logger.setLevel(logging.DEBUG)
+            self.logger.setLevel(DEBUG)
         else:
-            self.logger.setLevel(logging.INFO)
+            self.logger.setLevel(INFO)
 
-        if args.log_file is not None:
-            handler = logging.FileHandler(args.log_file)
-        else:
-            handler = logging.StreamHandler(stdout)
+        handler = StreamHandler() if args.log_file is None else FileHandler(args.log_file)
+        formatter = Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
 
+        # CSV output
+        self.csv = None
+        if args.output_csv is not None:
+            self.csv = writer(open(args.output_csv, 'wb'), delimiter=';', quoting=QUOTE_ALL)
+            # File;Response;Content-Leight
+            # blabla.ru/.git/index;200;123124
+            self.csv.writerow(['url', 'code', 'length'])
+
+        # JSON output
+        self.json = None
+        if args.output_json is not None:
+            self.json = io.open(args.output_json, 'w', encoding='utf-8')
+
+        #TODO: XML output
+        if args.output_xml is not None:
+            pass
+
+        #TODO: Database output
+        if args.output_database is not None:
+            pass
+
     def write(self, url, response):
-
         self.lock.acquire()
+        pprint(response.headers)
 
-        self.logger.info('%s %s' % (url, response.status_code))
+        # length = int(response.headers['content-length']) if 'content-length' in response.headers else 0
+        # length = len(response.content)
+        length = len(response.text)
+        print(response.text)
 
-        if self.args.output_csv is not None:
-            self.write_csv(url, response)
+        row = [url, response.status_code, length]
+        jdict = {'url': row[0], 'code': row[1], 'length': row[2]}
+        self.logger.info('%s %s %i' % (url, response.status_code, len(response.text)))
 
-        if self.args.output_json is not None:
-            self.write_json(url, response)
+        if self.csv is not None:
+            self.csv.writerow(row)
+
+        if self.json is not None:
+            self.json.write(unicode(dumps(jdict, ensure_ascii=False)))
 
         if self.args.output_xml is not None:
-            self.write_xml(url, response)
+            pass
 
         if self.args.output_database is not None:
-            self.write_database(url, response)
+            pass
 
         self.lock.release()
 
@@ -80,21 +105,6 @@ class Output(object):
         self.lock.acquire()
         self.logger.error(msg)
         self.lock.release()
-
-    def write_csv(self, url, response):
-        # File;Response;Content-Leight
-        # blabla.ru/.git/index;200;123124
-
-        pass
-
-    def write_json(self, url, response):
-        pass
-
-    def write_xml(self, url, response):
-        pass
-
-    def write_database(self, url, response):
-        pass
 
 
 class HttpScanner(object):
@@ -157,7 +167,7 @@ class HttpScanner(object):
             else:
                 response = get(url, timeout=self.args.timeout, allow_redirects=self.args.allow_redirects, verify=False)
 
-            pprint(response.__dict__)
+            # pprint(response.__dict__)
 
             # Filter responses
             if (self.args.allow is None and self.args.ignore is None) or \
@@ -217,10 +227,10 @@ def main():
     group.add_argument('-D', '--debug', action='store_true', help='debug mode')
     group.add_argument('-L', '--log-file', help='debug log path')
     args = parser.parse_args()
-    pprint(args)
+    # pprint(args)
     hs = HttpScanner(args)
     res = hs.scan()
-    pprint(res)
+    # pprint(res)
 
 if __name__ == '__main__':
     main()
