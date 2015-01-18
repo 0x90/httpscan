@@ -14,15 +14,17 @@ __license__ = 'GPL'
 from logging import StreamHandler, FileHandler, Formatter, getLogger, INFO, DEBUG, basicConfig
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from multiprocessing.dummy import Pool as ThreadPool, Lock
-from sys import exit, stderr
+from sys import exit
 from os import path
+from pprint import pprint
+from datetime import datetime
+
 from csv import writer, QUOTE_ALL
 from json import dumps
 import io
-import cookielib
-from pprint import pprint
+
 import httplib
-from datetime import datetime
+import cookielib
 
 # External dependencied
 from requests import get, packages
@@ -56,8 +58,8 @@ class Output(object):
             requests_log = getLogger("requests.packages.urllib3")
             requests_log.setLevel(DEBUG)
             # handler = FileHandler('requests.log') # TODO: fix it
-            handler.setFormatter(Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d/%m/%Y %H:%M:%S'))
-            requests_log.addHandler(handler)
+            # handler.setFormatter(Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d/%m/%Y %H:%M:%S'))
+            # requests_log.addHandler(handler)
             requests_log.propagate = True
         else:
             # Surpress InsecureRequestWarning: Unverified HTTPS request is being made
@@ -183,7 +185,7 @@ class HttpScanner(object):
         response = get(url, timeout=self.args.timeout, headers=headers, allow_redirects=self.args.allow_redirects,
                        verify=False, cookies=self.cookies, auth=self.auth)
 
-        # Filter responses and savee responses that are matching
+        # Filter responses and save responses that are matching
         if (self.args.allow is None and self.args.ignore is None) or \
                 (response.status_code in self.args.allow and response.status_code not in self.args.ignore):
             self.output.write(url, response)
@@ -227,12 +229,13 @@ def main():
 
     # Output options
     group = parser.add_argument_group('Output options')
-    # group.add_argument('-oD', '--output-database', help='output results to database via SQLAlchemy')
     group.add_argument('-oC', '--output-csv', help='output results to CSV file')
-    # group.add_argument('-oX', '--output-xml', help='output results to XML file')
     group.add_argument('-oJ', '--output-json', help='output results to JSON file')
+    # group.add_argument('-oD', '--output-database', help='output results to database via SQLAlchemy')
+    # group.add_argument('-oX', '--output-xml', help='output results to XML file')
 
-    # Logging options
+
+    # Debug and logging options
     group = parser.add_argument_group('Debug logging options')
     group.add_argument('-D', '--debug', action='store_true', help='write program debug output to file')
     group.add_argument('-L', '--log-file', help='debug log path')
