@@ -245,7 +245,7 @@ def main():
     start = datetime.now()
     HttpScanner(args).scan()
     print('Scan started %s' % start)
-    print('Scan finished %s' % datetime.now)
+    print('Scan finished %s' % datetime.now())
 
 if __name__ == '__main__':
     main()
