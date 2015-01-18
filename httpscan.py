@@ -77,12 +77,12 @@ class Output(object):
             self.json = io.open(args.output_json, 'w', encoding='utf-8')
 
         # TODO: XML output
-        if args.output_xml is not None:
-            pass
+        # if args.output_xml is not None:
+        #     pass
 
         # TODO: Database output
-        if args.output_database is not None:
-            pass
+        # if args.output_database is not None:
+        #     pass
 
     def write(self, url, response):
         self.lock.acquire()
@@ -97,13 +97,13 @@ class Output(object):
             jdict = {'url': row[0], 'code': row[1], 'length': row[2]}
             self.json.write(unicode(dumps(jdict, ensure_ascii=False)))
 
-        if self.args.output_xml is not None:
-            # TODO: XML output
-            pass
-
-        if self.args.output_database is not None:
-            # TODO: Database output
-            pass
+        # if self.args.output_xml is not None:
+        #     # TODO: XML output
+        #     pass
+        #
+        # if self.args.output_database is not None:
+        #     # TODO: Database output
+        #     pass
 
         self.lock.release()
 
