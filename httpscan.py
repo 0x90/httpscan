@@ -1,54 +1,72 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 #
-# Thanks, for the great manual
-# https://medium.com/@thechriskiehl/parallelism-in-one-line-40e9b2b36148
+# Dummy Multithreaded HTTP scanner.
+# Not properly tested and bugfixed.
+# Feel free to contribute.
 #
-
+# Usage example:
+#       ./httpscan.py hosts.txt urls.txt --threads 5 -oC test.csv -r -R -D -L scan.log
+#
 __author__ = '090h'
 __license__ = 'GPL'
 
-
-from logging import StreamHandler, FileHandler, Formatter, getLogger, INFO, DEBUG
+from logging import StreamHandler, FileHandler, Formatter, getLogger, INFO, DEBUG, basicConfig
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from multiprocessing.dummy import Pool as ThreadPool, Lock
-from pprint import pprint
-from sys import exit
+from sys import exit, stderr
 from os import path
-
 from csv import writer, QUOTE_ALL
 from json import dumps
 import io
+import cookielib
+from pprint import pprint
+import httplib
+from datetime import datetime
 
 # External dependencied
-from requests import options, get, head
+from requests import get, packages
+from cookies import Cookies
+from fake_useragent import UserAgent
 
 
 class Output(object):
-
     def __init__(self, args):
         self.args = args
         self.lock = Lock()
 
         # Logger init
         self.logger = getLogger('httpscan_logger')
-        if args.debug:
-            print('Enabling debug logging.')
-            self.logger.setLevel(DEBUG)
-        else:
-            self.logger.setLevel(INFO)
-
+        self.logger.setLevel(DEBUG if args.debug else INFO)
         handler = StreamHandler() if args.log_file is None else FileHandler(args.log_file)
-        formatter = Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d/%m/%Y %H:%M:%S')
-        handler.setFormatter(formatter)
+        handler.setFormatter(Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d/%m/%Y %H:%M:%S'))
         self.logger.addHandler(handler)
+
+        # Requests lib debug
+        if args.debug:
+            # these two lines enable debugging at httplib level (requests->urllib3->httplib)
+            # you will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
+            # the only thing missing will be the response.body which is not logged.
+            # httplib.HTTPConnection.debuglevel = 1
+            httplib.HTTPConnection.debuglevel = 5
+            packages.urllib3.add_stderr_logger()
+
+            basicConfig() # you need to initialize logging, otherwise you will not see anything from requests
+            getLogger().setLevel(DEBUG)
+            requests_log = getLogger("requests.packages.urllib3")
+            requests_log.setLevel(DEBUG)
+            # handler = FileHandler('requests.log') # TODO: fix it
+            handler.setFormatter(Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d/%m/%Y %H:%M:%S'))
+            requests_log.addHandler(handler)
+            requests_log.propagate = True
+        else:
+            # Surpress InsecureRequestWarning: Unverified HTTPS request is being made
+            packages.urllib3.disable_warnings()
 
         # CSV output
         self.csv = None
         if args.output_csv is not None:
             self.csv = writer(open(args.output_csv, 'wb'), delimiter=';', quoting=QUOTE_ALL)
-            # File;Response;Content-Leight
-            # blabla.ru/.git/index;200;123124
             self.csv.writerow(['url', 'code', 'length'])
 
         # JSON output
@@ -56,37 +74,33 @@ class Output(object):
         if args.output_json is not None:
             self.json = io.open(args.output_json, 'w', encoding='utf-8')
 
-        #TODO: XML output
+        # TODO: XML output
         if args.output_xml is not None:
             pass
 
-        #TODO: Database output
+        # TODO: Database output
         if args.output_database is not None:
             pass
 
     def write(self, url, response):
         self.lock.acquire()
-        pprint(response.headers)
-
-        # length = int(response.headers['content-length']) if 'content-length' in response.headers else 0
-        # length = len(response.content)
-        length = len(response.text)
-        print(response.text)
-
-        row = [url, response.status_code, length]
-        jdict = {'url': row[0], 'code': row[1], 'length': row[2]}
+        length = int(response.headers['content-length']) if 'content-length' in response.headers else len(response.text)
         self.logger.info('%s %s %i' % (url, response.status_code, len(response.text)))
 
+        row = [url, response.status_code, length]
         if self.csv is not None:
             self.csv.writerow(row)
 
         if self.json is not None:
+            jdict = {'url': row[0], 'code': row[1], 'length': row[2]}
             self.json.write(unicode(dumps(jdict, ensure_ascii=False)))
 
         if self.args.output_xml is not None:
+            # TODO: XML output
             pass
 
         if self.args.output_database is not None:
+            # TODO: Database output
             pass
 
         self.lock.release()
@@ -108,13 +122,49 @@ class Output(object):
 
 
 class HttpScanner(object):
-
     def __init__(self, args):
         self.args = args
         self.output = Output(args)
-        self.hosts = self.__file_to_list(args.hosts)
-        self.urls = self.__file_to_list(args.urls)
         self.pool = ThreadPool(self.args.threads)
+
+        # Reading files
+        hosts = self.__file_to_list(args.hosts)
+        urls = self.__file_to_list(args.urls)
+
+        # Generating full url list
+        self.urls = []
+        for host in hosts:
+            host = 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
+                'http') else host
+            for url in urls:
+                full_url = host + url if host.endswith('/') or url.startswith('/') else host + '/' + url
+                if full_url not in self.urls:
+                    self.urls.append(full_url)
+
+        print('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), len(self.urls)))
+
+        # Auth
+        if self.args.auth is None:
+            self.auth = ()
+        else:
+            items = self.args.auth.split(':')
+            self.auth = (items[0], items[1])
+
+        # Cookies
+        self.cookies = {}
+        if self.args.cookies is not None:
+            self.cookies = Cookies.from_request(self.args.cookies)
+
+        if self.args.load_cookies is not None:
+            if not path.exists(self.args.load_cookies) or not path.isfile(self.args.load_cookies):
+                self.output.write_error_log('Could not find cookie file: %s' % self.args.load_cookies)
+                exit(-1)
+
+            self.cookies = cookielib.MozillaCookieJar(self.args.load_cookies)
+            self.cookies.load()
+
+        # User-Agent
+        self.ua = UserAgent() if self.args.random_agent else None
 
     def __file_to_list(self, filename):
         if not path.exists(filename) or not path.isfile(filename):
@@ -122,69 +172,26 @@ class HttpScanner(object):
             exit(-1)
         return filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
 
-    def scan_host(self, host):
-        """
-        Scan urls on the single host
-        :param host: host to scan
-        :return: response list
-        """
-        if not host.lower().startswith('http'):
-            host = 'https://%s' % host if ':443' in host else 'http://%s' % host
+    def scan_url(self, url):
+        self.output.write_debug_log('Scanning  %s' % url)
 
-        # logging.debug('host url: %s' % host)
-        self.output.write_debug_log('Scanning host: %s' % host)
+        headers = {}
+        if self.args.user_agent is not None:
+            headers = {'User-agent': self.args.user_agent}
+        if self.args.random_agent is not None:
+            headers = {'User-agent': self.ua.random}
+        response = get(url, timeout=self.args.timeout, headers=headers, allow_redirects=self.args.allow_redirects,
+                       verify=False, cookies=self.cookies, auth=self.auth)
 
-        if self.args.method == 'auto ':
-            # Trying to use OPTIONS request
-            response = options(host)
-            o = response.headers['allow'] if 'allow' in response.headers else None
+        # Filter responses and savee responses that are matching
+        if (self.args.allow is None and self.args.ignore is None) or \
+                (response.status_code in self.args.allow and response.status_code not in self.args.ignore):
+            self.output.write(url, response)
 
-            # Determine if HEAD requests is allowed
-            if o is not None:
-                use_head = False if o.find('HEAD') == -1 else True
-            else:
-                use_head = False if head(host).status_code == 405 else True
-
-            if use_head:
-                self.output.write_debug_log('HEAD is supported for %s' % host)
-
-        elif self.args.method == 'get':
-            use_head = False
-        else:
-            use_head = True
-
-
-        responses = []
-        for short_url in self.urls:
-            if host.endswith('/') or short_url.startswith('/'):
-                url = host + short_url
-            else:
-                url = host + '/' + short_url
-
-            # logging.debug('Scanning %s' % url)
-            if use_head:
-                response = head(url, timeout=self.args.timeout, allow_redirects=self.args.allow_redirects, verify=False)
-            else:
-                response = get(url, timeout=self.args.timeout, allow_redirects=self.args.allow_redirects, verify=False)
-
-            # pprint(response.__dict__)
-
-            # Filter responses
-            if (self.args.allow is None and self.args.ignore is None) or \
-                    (response.status_code in self.args.allow and response.status_code not in self.args.ignore):
-                # Log responses
-                self.output.write(url, response)
-                responses.append(response)
-
-        return responses
+        return response
 
     def scan(self):
-        """
-        Start scaning process
-        :return: List of responses
-        """
-        results = self.pool.map(self.scan_host, self.hosts)
-
+        results = self.pool.map(self.scan_url, self.urls)
         # Wait
         self.pool.close()
         self.pool.join()
@@ -193,7 +200,8 @@ class HttpScanner(object):
 
 
 def main():
-    parser = ArgumentParser('httpscan', description='Multithreaded HTTP scanner', formatter_class=ArgumentDefaultsHelpFormatter, fromfile_prefix_chars='@')
+    parser = ArgumentParser('httpscan', description='Multithreaded HTTP scanner',
+                            formatter_class=ArgumentDefaultsHelpFormatter, fromfile_prefix_chars='@')
 
     # main options
     parser.add_argument('hosts', help='hosts file')
@@ -203,34 +211,38 @@ def main():
     group = parser.add_argument_group('Scan params')
     group.add_argument('-t', '--timeout', type=int, default=10, help='HTTP scan timeout')
     group.add_argument('-T', '--threads', type=int, default=5, help='threads count')
-    group.add_argument('-m', '--method', default='auto', choices=['auto', 'get', 'head'], help='method to use while checking')
     group.add_argument('-r', '--allow-redirects', action='store_true', help='follow redirects')
-    group.add_argument('-c', '--cookie', help='cookie to send during scan') # --cookie="blabla=asdasd; vblaba"
-    group.add_argument('-u', '--user-agent', help='User-Agent')
+    group.add_argument('-a', '--auth', help='HTTP Auth user:password')
+    group.add_argument('-c', '--cookies', help='cookies to send during scan')
+    group.add_argument('-C', '--load-cookies', help='load cookies from specified file')
+    group.add_argument('-u', '--user-agent', help='User-Agent to use')
+    group.add_argument('-R', '--random-agent', action='store_true', help='use random User-Agent')
 
     # filter options
     group = parser.add_argument_group('Filter options')
-    group.add_argument('-a', '--allow', required=False, nargs='+', type=int, help='allow following HTTP response statuses')
-    group.add_argument('-i', '--ignore', required=False, nargs='+', type=int, help='ignore following HTTP response statuses')
+    group.add_argument('-A', '--allow', required=False, nargs='+', type=int,
+                       help='allow following HTTP response statuses')
+    group.add_argument('-I', '--ignore', required=False, nargs='+', type=int,
+                       help='ignore following HTTP response statuses')
 
-    # output options
+    # Output options
     group = parser.add_argument_group('Output options')
-    # group.add_argument('-d', '--dump',  help='dump response files to directory')
-    # group.add_argument('-e', '--execute',  help='execute following command on success')
     group.add_argument('-oD', '--output-database', help='output results to database via SQLAlchemy')
     group.add_argument('-oC', '--output-csv', help='output results to CSV file')
     group.add_argument('-oX', '--output-xml', help='output results to XML file')
     group.add_argument('-oJ', '--output-json', help='output results to JSON file')
 
-    #
+    # Logging options
     group = parser.add_argument_group('Debug logging options')
-    group.add_argument('-D', '--debug', action='store_true', help='debug mode')
+    group.add_argument('-D', '--debug', action='store_true', help='write program debug output to file')
     group.add_argument('-L', '--log-file', help='debug log path')
     args = parser.parse_args()
-    # pprint(args)
-    hs = HttpScanner(args)
-    res = hs.scan()
-    # pprint(res)
+    pprint(args)
+
+    start = datetime.now()
+    HttpScanner(args).scan()
+    print('Scan started %s' % start)
+    print('Scan finished %s' % datetime.now)
 
 if __name__ == '__main__':
     main()
