@@ -227,9 +227,9 @@ def main():
 
     # Output options
     group = parser.add_argument_group('Output options')
-    group.add_argument('-oD', '--output-database', help='output results to database via SQLAlchemy')
+    # group.add_argument('-oD', '--output-database', help='output results to database via SQLAlchemy')
     group.add_argument('-oC', '--output-csv', help='output results to CSV file')
-    group.add_argument('-oX', '--output-xml', help='output results to XML file')
+    # group.add_argument('-oX', '--output-xml', help='output results to XML file')
     group.add_argument('-oJ', '--output-json', help='output results to JSON file')
 
     # Logging options
