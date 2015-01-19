@@ -180,7 +180,7 @@ class HttpScanner(object):
         headers = {}
         if self.args.user_agent is not None:
             headers = {'User-agent': self.args.user_agent}
-        if self.args.random_agent is not None:
+        if self.args.random_agent:
             headers = {'User-agent': self.ua.random}
         try:
             response = get(url, timeout=self.args.timeout, headers=headers, allow_redirects=self.args.allow_redirects,
