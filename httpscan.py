@@ -182,8 +182,12 @@ class HttpScanner(object):
             headers = {'User-agent': self.args.user_agent}
         if self.args.random_agent is not None:
             headers = {'User-agent': self.ua.random}
-        response = get(url, timeout=self.args.timeout, headers=headers, allow_redirects=self.args.allow_redirects,
+        try:
+            response = get(url, timeout=self.args.timeout, headers=headers, allow_redirects=self.args.allow_redirects,
                        verify=False, cookies=self.cookies, auth=self.auth)
+        except:
+            self.output.write_error_log('Error while quering %s' % url)
+            return None
 
         # Filter responses and save responses that are matching
         if (self.args.allow is None and self.args.ignore is None) or \
@@ -240,7 +244,7 @@ def main():
     group.add_argument('-D', '--debug', action='store_true', help='write program debug output to file')
     group.add_argument('-L', '--log-file', help='debug log path')
     args = parser.parse_args()
-    pprint(args)
+    # pprint(args)
 
     start = datetime.now()
     HttpScanner(args).scan()
