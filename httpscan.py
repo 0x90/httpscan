@@ -166,7 +166,7 @@ class HttpScanner(object):
             self.cookies.load()
 
         # User-Agent
-        self.ua = UserAgent() if self.args.random_agent else None
+        self.ua = UserAgent() # if self.args.random_agent else None
 
     def __file_to_list(self, filename):
         if not path.exists(filename) or not path.isfile(filename):
