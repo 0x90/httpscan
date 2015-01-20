@@ -1,5 +1,7 @@
 SQLAlchemy==0.9.8
 cookies==2.2.1
 fake-useragent==0.0.6
+gevent==1.0.1
+greenlet==0.4.5
 requests==2.5.0
 wsgiref==0.1.2

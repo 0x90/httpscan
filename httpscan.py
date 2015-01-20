@@ -13,10 +13,8 @@ __license__ = 'GPL'
 
 from logging import StreamHandler, FileHandler, Formatter, getLogger, INFO, DEBUG, basicConfig
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
-from multiprocessing.dummy import Pool as ThreadPool, Lock
 from sys import exit
 from os import path
-from pprint import pprint
 from datetime import datetime
 
 from csv import writer, QUOTE_ALL
@@ -27,15 +25,18 @@ import httplib
 import cookielib
 
 # External dependencied
-from requests import get, packages
+from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
+from requests import packages, get
 from cookies import Cookies
 from fake_useragent import UserAgent
+from gevent.lock import RLock
+from gevent.pool import Pool
 
 
 class Output(object):
     def __init__(self, args):
         self.args = args
-        self.lock = Lock()
+        self.lock = RLock()
 
         # Logger init
         self.logger = getLogger('httpscan_logger')
@@ -53,7 +54,7 @@ class Output(object):
             httplib.HTTPConnection.debuglevel = 5
             packages.urllib3.add_stderr_logger()
 
-            basicConfig() # you need to initialize logging, otherwise you will not see anything from requests
+            basicConfig()  # you need to initialize logging, otherwise you will not see anything from requests
             getLogger().setLevel(DEBUG)
             requests_log = getLogger("requests.packages.urllib3")
             requests_log.setLevel(DEBUG)
@@ -76,13 +77,13 @@ class Output(object):
         if args.output_json is not None:
             self.json = io.open(args.output_json, 'w', encoding='utf-8')
 
-        # TODO: XML output
-        # if args.output_xml is not None:
-        #     pass
+            # TODO: XML output
+            # if args.output_xml is not None:
+            #     pass
 
-        # TODO: Database output
-        # if args.output_database is not None:
-        #     pass
+            # TODO: Database output
+            # if args.output_database is not None:
+            #     pass
 
     def write(self, url, response):
         self.lock.acquire()
@@ -127,7 +128,7 @@ class HttpScanner(object):
     def __init__(self, args):
         self.args = args
         self.output = Output(args)
-        self.pool = ThreadPool(self.args.threads)
+        self.pool = Pool(self.args.threads)
 
         # Reading files
         hosts = self.__file_to_list(args.hosts)
@@ -166,7 +167,7 @@ class HttpScanner(object):
             self.cookies.load()
 
         # User-Agent
-        self.ua = UserAgent() # if self.args.random_agent else None
+        self.ua = UserAgent() if self.args.random_agent else None
 
     def __file_to_list(self, filename):
         if not path.exists(filename) or not path.isfile(filename):
@@ -174,34 +175,45 @@ class HttpScanner(object):
             exit(-1)
         return filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
 
-    def scan_url(self, url):
+    def scan(self, url):
         self.output.write_debug_log('Scanning  %s' % url)
 
+        # Fill headers
         headers = {}
         if self.args.user_agent is not None:
             headers = {'User-agent': self.args.user_agent}
         if self.args.random_agent:
             headers = {'User-agent': self.ua.random}
+
+        # Query URL and handle exceptions
         try:
             response = get(url, timeout=self.args.timeout, headers=headers, allow_redirects=self.args.allow_redirects,
-                       verify=False, cookies=self.cookies, auth=self.auth)
-        except:
-            self.output.write_error_log('Error while quering %s' % url)
+                           verify=False, cookies=self.cookies, auth=self.auth)
+        except ConnectionError:
+            self.output.write_error_log('Connection error while quering %s' % url)
+            return None
+        except HTTPError:
+            self.output.write_error_log('HTTP error while quering %s' % url)
+            return None
+        except Timeout:
+            self.output.write_error_log('Timeout while quering %s' % url)
+            return None
+        except TooManyRedirects:
+            self.output.write_error_log('Too many redirects while quering %s' % url)
+            return None
+        except Exception:
+            self.output.write_error_log('Unknown exception while quering %s' % url)
             return None
 
-        # Filter responses and save responses that are matching
+        # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
                 (response.status_code in self.args.allow and response.status_code not in self.args.ignore):
             self.output.write(url, response)
 
         return response
 
-    def scan(self):
-        results = self.pool.map(self.scan_url, self.urls)
-        # Wait
-        self.pool.close()
-        self.pool.join()
-
+    def run(self):
+        results = self.pool.map(self.scan, self.urls)
         return results
 
 
@@ -223,6 +235,7 @@ def main():
     group.add_argument('-C', '--load-cookies', help='load cookies from specified file')
     group.add_argument('-u', '--user-agent', help='User-Agent to use')
     group.add_argument('-R', '--random-agent', action='store_true', help='use random User-Agent')
+    group.add_argument('-d', '--dump', help='save found files to directory')
 
     # filter options
     group = parser.add_argument_group('Filter options')
@@ -244,12 +257,12 @@ def main():
     group.add_argument('-D', '--debug', action='store_true', help='write program debug output to file')
     group.add_argument('-L', '--log-file', help='debug log path')
     args = parser.parse_args()
-    # pprint(args)
 
     start = datetime.now()
-    HttpScanner(args).scan()
+    HttpScanner(args).run()
     print('Scan started %s' % start)
     print('Scan finished %s' % datetime.now())
+
 
 if __name__ == '__main__':
     main()
