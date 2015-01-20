@@ -14,15 +14,15 @@ __license__ = 'GPL'
 from logging import StreamHandler, FileHandler, Formatter, getLogger, INFO, DEBUG, basicConfig
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from sys import exit
-from os import path
+from os import path, makedirs
 from datetime import datetime
+from urlparse import urlparse, urljoin
+import httplib
+import cookielib
 
 from csv import writer, QUOTE_ALL
 from json import dumps
 import io
-
-import httplib
-import cookielib
 
 # External dependencied
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
@@ -67,33 +67,41 @@ class Output(object):
             packages.urllib3.disable_warnings()
 
         # CSV output
-        self.csv = None
-        if args.output_csv is not None:
+        if args.output_csv is None:
+            self.csv = None
+        else:
             self.csv = writer(open(args.output_csv, 'wb'), delimiter=';', quoting=QUOTE_ALL)
             self.csv.writerow(['url', 'code', 'length'])
 
         # JSON output
-        self.json = None
-        if args.output_json is not None:
+        if args.output_json is None:
+            self.json = None
+        else:
             self.json = io.open(args.output_json, 'w', encoding='utf-8')
 
-            # TODO: XML output
-            # if args.output_xml is not None:
-            #     pass
+        # TODO: XML output
+        # if args.output_xml is not None:
+        #     pass
 
-            # TODO: Database output
-            # if args.output_database is not None:
-            #     pass
+        # TODO: Database output
+        # if args.output_database is not None:
+        #     pass
+
+        self.dump = path.abspath(args.dump) if args.dump is not None else None
 
     def write(self, url, response):
         self.lock.acquire()
+
+        # Write to log file
         length = int(response.headers['content-length']) if 'content-length' in response.headers else len(response.text)
         self.logger.info('%s %s %i' % (url, response.status_code, len(response.text)))
 
+        # Write to CSV file
         row = [url, response.status_code, length]
         if self.csv is not None:
             self.csv.writerow(row)
 
+        # Write to JSON file
         if self.json is not None:
             jdict = {'url': row[0], 'code': row[1], 'length': row[2]}
             self.json.write(unicode(dumps(jdict, ensure_ascii=False)))
@@ -106,6 +114,21 @@ class Output(object):
         #     # TODO: Database output
         #     pass
 
+        # Save contents to dump folder
+        if self.dump is not None:
+            parsed = urlparse(url)
+            host_folder = path.join(self.dump, parsed.netloc)
+            p, f = path.split(parsed.path)
+            folder = path.join(host_folder, p[1:])
+
+            if not path.exists(folder):
+                makedirs(folder)
+            filename = path.join(folder, f)
+
+            with open(filename, 'wb') as f:
+                f.write(response.content)
+
+        # Realse lock
         self.lock.release()
 
     def write_log(self, msg):
@@ -139,8 +162,10 @@ class HttpScanner(object):
         for host in hosts:
             host = 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
                 'http') else host
+
             for url in urls:
-                full_url = host + url if host.endswith('/') or url.startswith('/') else host + '/' + url
+                # full_url = host + url if host.endswith('/') or url.startswith('/') else host + '/' + url
+                full_url = urljoin(host, url)
                 if full_url not in self.urls:
                     self.urls.append(full_url)
 
@@ -187,6 +212,7 @@ class HttpScanner(object):
 
         # Query URL and handle exceptions
         try:
+            # TODO: add support for user:password in URL
             response = get(url, timeout=self.args.timeout, headers=headers, allow_redirects=self.args.allow_redirects,
                            verify=False, cookies=self.cookies, auth=self.auth)
         except ConnectionError:
@@ -236,6 +262,7 @@ def main():
     group.add_argument('-u', '--user-agent', help='User-Agent to use')
     group.add_argument('-R', '--random-agent', action='store_true', help='use random User-Agent')
     group.add_argument('-d', '--dump', help='save found files to directory')
+    # TODO: add Referer argument
 
     # filter options
     group = parser.add_argument_group('Filter options')
