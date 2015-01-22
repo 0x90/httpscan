@@ -6,22 +6,21 @@
 # Feel free to contribute.
 #
 # Usage example:
-#       ./httpscan.py hosts.txt urls.txt --threads 5 -oC test.csv -r -R -D -L scan.log
+# ./httpscan.py hosts.txt urls.txt --threads 5 -oC test.csv -r -R -D -L scan.log
 #
 __author__ = '090h'
 __license__ = 'GPL'
 
-from logging import StreamHandler, FileHandler, Formatter, getLogger, INFO, DEBUG, basicConfig
+from logging import StreamHandler, FileHandler, Formatter, getLogger, ERROR, INFO, DEBUG, basicConfig
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from sys import exit
 from os import path, makedirs
 from datetime import datetime
 from urlparse import urlparse, urljoin
-import httplib
-import cookielib
-
 from csv import writer, QUOTE_ALL
 from json import dumps
+import cookielib
+import httplib
 import io
 
 # External dependencied
@@ -31,36 +30,41 @@ from cookies import Cookies
 from fake_useragent import UserAgent
 from gevent.lock import RLock
 from gevent.pool import Pool
+from colorama import init, Fore, Back, Style
+
+
+def strnow():
+    return datetime.now().strftime('%d.%m.%Y %H:%M:%S')
 
 
 class Output(object):
+
     def __init__(self, args):
         self.args = args
         self.lock = RLock()
 
-        # Logger init
-        self.logger = getLogger('httpscan_logger')
-        self.logger.setLevel(DEBUG if args.debug else INFO)
-        handler = StreamHandler() if args.log_file is None else FileHandler(args.log_file)
-        handler.setFormatter(Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d/%m/%Y %H:%M:%S'))
-        self.logger.addHandler(handler)
+        # Colorama init
+        init()
 
-        # Requests lib debug
+        # Logger init
+        if args.log_file is not None:
+            self.logger = getLogger('httpscan_logger')
+            self.logger.setLevel(DEBUG if args.debug else INFO)
+            # handler = StreamHandler() if args.log_file is None else FileHandler(args.log_file)
+            handler = FileHandler(args.log_file)
+            handler.setFormatter(Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d.%m.%Y %H:%M:%S'))
+            self.logger.addHandler(handler)
+        else:
+            self.logger = None
+
+        # Enable requests lib debug output
         if args.debug:
-            # these two lines enable debugging at httplib level (requests->urllib3->httplib)
-            # you will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
-            # the only thing missing will be the response.body which is not logged.
-            # httplib.HTTPConnection.debuglevel = 1
             httplib.HTTPConnection.debuglevel = 5
             packages.urllib3.add_stderr_logger()
-
-            basicConfig()  # you need to initialize logging, otherwise you will not see anything from requests
+            basicConfig()
             getLogger().setLevel(DEBUG)
             requests_log = getLogger("requests.packages.urllib3")
             requests_log.setLevel(DEBUG)
-            # handler = FileHandler('requests.log') # TODO: fix it
-            # handler.setFormatter(Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d/%m/%Y %H:%M:%S'))
-            # requests_log.addHandler(handler)
             requests_log.propagate = True
         else:
             # Surpress InsecureRequestWarning: Unverified HTTPS request is being made
@@ -71,79 +75,75 @@ class Output(object):
             self.csv = None
         else:
             self.csv = writer(open(args.output_csv, 'wb'), delimiter=';', quoting=QUOTE_ALL)
-            self.csv.writerow(['url', 'code', 'length'])
+            self.csv.writerow(['url', 'status', 'length'])
 
         # JSON output
-        if args.output_json is None:
-            self.json = None
-        else:
-            self.json = io.open(args.output_json, 'w', encoding='utf-8')
+        self.json = None if args.output_json is None else io.open(args.output_json, 'w', encoding='utf-8')
 
-        # TODO: XML output
-        # if args.output_xml is not None:
-        #     pass
-
-        # TODO: Database output
-        # if args.output_database is not None:
-        #     pass
-
+        # Dump to file
         self.dump = path.abspath(args.dump) if args.dump is not None else None
+
+    def _parse(self, url, response):
+        return {'url': url,
+                'status': response.status_code,
+                'length': int(response.headers['content-length']) if 'content-length' in response.headers else len(
+                    response.text)}
 
     def write(self, url, response):
         self.lock.acquire()
+        parsed = self._parse(url, response)
+
+        if not self.args.progress_bar:
+            if parsed['status'] == 200:
+                print(Fore.GREEN + '[%s] %s -> %i' % (strnow(), parsed['url'], parsed['status']))
+            elif 400 <= parsed['status'] < 500:
+                print(Fore.RED + '[%s] %s -> %i' % (strnow(), parsed['url'], parsed['status']))
+            else:
+                print(Fore.YELLOW + '[%s] %s -> %i' % (strnow(), parsed['url'], parsed['status']))
 
         # Write to log file
-        length = int(response.headers['content-length']) if 'content-length' in response.headers else len(response.text)
-        self.logger.info('%s %s %i' % (url, response.status_code, len(response.text)))
+        if self.logger is not None:
+            self.logger.info('%s %s %i' % (url, response.status_code, len(response.text)))
 
         # Write to CSV file
-        row = [url, response.status_code, length]
         if self.csv is not None:
-            self.csv.writerow(row)
+            self.csv.writerow([parsed['url'], parsed['status'], parsed['length']])
 
         # Write to JSON file
         if self.json is not None:
-            jdict = {'url': row[0], 'code': row[1], 'length': row[2]}
-            self.json.write(unicode(dumps(jdict, ensure_ascii=False)))
+            self.json.write(unicode(dumps(parsed, ensure_ascii=False)))
 
-        # if self.args.output_xml is not None:
-        #     # TODO: XML output
-        #     pass
-        #
-        # if self.args.output_database is not None:
-        #     # TODO: Database output
-        #     pass
-
-        # Save contents to dump folder
+        # Save contents to file
         if self.dump is not None:
-            parsed = urlparse(url)
-            host_folder = path.join(self.dump, parsed.netloc)
-            p, f = path.split(parsed.path)
-            folder = path.join(host_folder, p[1:])
-
-            if not path.exists(folder):
-                makedirs(folder)
-            filename = path.join(folder, f)
-
-            with open(filename, 'wb') as f:
-                f.write(response.content)
+            self.write_dump(url, response)
 
         # Realse lock
         self.lock.release()
 
-    def write_log(self, msg):
-        self.lock.acquire()
-        self.logger.info(msg)
-        self.lock.release()
+    def write_dump(self, url, response):
+        parsed = urlparse(url)
+        host_folder = path.join(self.dump, parsed.netloc)
+        p, f = path.split(parsed.path)
+        folder = path.join(host_folder, p[1:])
 
-    def write_debug_log(self, msg):
-        self.lock.acquire()
-        self.logger.debug(msg)
-        self.lock.release()
+        if not path.exists(folder):
+            makedirs(folder)
+        filename = path.join(folder, f)
 
-    def write_error_log(self, msg):
+        with open(filename, 'wb') as f:
+            f.write(response.content)
+
+    def write_log(self, msg, loglevel=INFO):
+        if self.logger is None:
+            return
+
         self.lock.acquire()
-        self.logger.error(msg)
+        if loglevel == INFO:
+            self.logger.info(msg)
+        elif loglevel == DEBUG:
+            self.logger.debug(msg)
+        elif loglevel == ERROR:
+            self.logger.error(msg)
         self.lock.release()
 
 
@@ -185,7 +185,7 @@ class HttpScanner(object):
 
         if self.args.load_cookies is not None:
             if not path.exists(self.args.load_cookies) or not path.isfile(self.args.load_cookies):
-                self.output.write_error_log('Could not find cookie file: %s' % self.args.load_cookies)
+                self.output.write_log('Could not find cookie file: %s' % self.args.load_cookies, ERROR)
                 exit(-1)
 
             self.cookies = cookielib.MozillaCookieJar(self.args.load_cookies)
@@ -196,12 +196,12 @@ class HttpScanner(object):
 
     def __file_to_list(self, filename):
         if not path.exists(filename) or not path.isfile(filename):
-            self.output.write_error_log(('File %s not found' % filename))
+            self.output.write_log('File %s not found' % filename, ERROR)
             exit(-1)
         return filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
 
     def scan(self, url):
-        self.output.write_debug_log('Scanning  %s' % url)
+        self.output.write_log('Scanning  %s' % url, DEBUG)
 
         # Fill headers
         headers = {}
@@ -216,19 +216,19 @@ class HttpScanner(object):
             response = get(url, timeout=self.args.timeout, headers=headers, allow_redirects=self.args.allow_redirects,
                            verify=False, cookies=self.cookies, auth=self.auth)
         except ConnectionError:
-            self.output.write_error_log('Connection error while quering %s' % url)
+            self.output.write_log('Connection error while quering %s' % url, ERROR)
             return None
         except HTTPError:
-            self.output.write_error_log('HTTP error while quering %s' % url)
+            self.output.write_log('HTTP error while quering %s' % url, ERROR)
             return None
         except Timeout:
-            self.output.write_error_log('Timeout while quering %s' % url)
+            self.output.write_log('Timeout while quering %s' % url, ERROR)
             return None
         except TooManyRedirects:
-            self.output.write_error_log('Too many redirects while quering %s' % url)
+            self.output.write_log('Too many redirects while quering %s' % url, ERROR)
             return None
         except Exception:
-            self.output.write_error_log('Unknown exception while quering %s' % url)
+            self.output.write_log('Unknown exception while quering %s' % url, ERROR)
             return None
 
         # Filter responses and save responses that are matching ignore, allow rules
@@ -277,6 +277,7 @@ def main():
     group.add_argument('-oJ', '--output-json', help='output results to JSON file')
     # group.add_argument('-oD', '--output-database', help='output results to database via SQLAlchemy')
     # group.add_argument('-oX', '--output-xml', help='output results to XML file')
+    group.add_argument('-P', '--progress-bar', action='store_true', help='show scanning progress')
 
 
     # Debug and logging options
@@ -287,8 +288,10 @@ def main():
 
     start = datetime.now()
     HttpScanner(args).run()
-    print('Scan started %s' % start)
-    print('Scan finished %s' % datetime.now())
+    print(Fore.RESET + Back.RESET + Style.RESET_ALL + 'Statisitcs:')
+    print('Scan started %s' % start.strftime('%d.%m.%Y %H:%M:%S'))
+    finish = datetime.now()
+    print('Scan finished %s' % finish.strftime('%d.%m.%Y %H:%M:%S'))
 
 
 if __name__ == '__main__':
