@@ -151,7 +151,7 @@ class HttpScanner(object):
     def __init__(self, args):
         self.args = args
         self.output = Output(args)
-        self.pool = Pool(self.args.threads)
+
 
         # Reading files
         hosts = self.__file_to_list(args.hosts)
@@ -170,6 +170,13 @@ class HttpScanner(object):
                     self.urls.append(full_url)
 
         print('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), len(self.urls)))
+
+        # Pool
+        if self.args.threads > len(self.urls):
+            print('Too many threads! Fixing threads to %i' % len(self.urls))
+            self.pool = Pool(len(self.urls))
+        else:
+            self.pool = Pool(self.args.threads)
 
         # Auth
         if self.args.auth is None:
@@ -233,7 +240,8 @@ class HttpScanner(object):
 
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
-                (response.status_code in self.args.allow and response.status_code not in self.args.ignore):
+            (self.args.allow is not None and response.status_code in self.args.allow) or \
+            (self.args.ignore is not None and response.status_code not in self.args.ignore):
             self.output.write(url, response)
 
         return response
@@ -287,7 +295,12 @@ def main():
     args = parser.parse_args()
 
     start = datetime.now()
-    HttpScanner(args).run()
+    try:
+        HttpScanner(args).run()
+    except KeyboardInterrupt:
+        # TODO: add signal handling
+        print(Fore.RESET + Back.RESET + Style.RESET_ALL)
+        print('Ctrl+C catched')
     print(Fore.RESET + Back.RESET + Style.RESET_ALL + 'Statisitcs:')
     print('Scan started %s' % start.strftime('%d.%m.%Y %H:%M:%S'))
     finish = datetime.now()
