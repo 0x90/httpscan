@@ -251,26 +251,6 @@ class HttpScanner(object):
         """
         self.args = args
 
-        # Reading files
-        print("Reading files. Wait a moment...")
-        hosts = self.__file_to_list(args.hosts)
-        urls = self.__file_to_list(args.urls)
-
-
-        # Generating full url list
-        print("Generating deduplicated url list.")
-        self.urls = []
-        for host in hosts:
-            host = 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
-                'http') else host
-
-            for url in urls:
-                full_url = urljoin(host, url)
-                if full_url not in self.urls:
-                    self.urls.append(full_url)
-
-        print('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), len(self.urls)))
-
         # Output
         a = args
         a.urls_count = len(self.urls)
@@ -328,6 +308,25 @@ class HttpScanner(object):
 
         # User-Agent
         self.ua = UserAgent() if self.args.random_agent else None
+
+        # Reading files
+        print("Reading files. Wait a moment...")
+        hosts = self.__file_to_list(args.hosts)
+        urls = self.__file_to_list(args.urls)
+
+        # Generating full url list
+        print("Generating deduplicated url list.")
+        self.urls = []
+        for host in hosts:
+            host = 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
+                'http') else host
+
+            for url in urls:
+                full_url = urljoin(host, url)
+                if full_url not in self.urls:
+                    self.urls.append(full_url)
+
+        print('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), len(self.urls)))
 
     def __file_to_list(self, filename):
         """
