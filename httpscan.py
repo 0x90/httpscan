@@ -29,10 +29,10 @@ import signal
 
 # External dependencied
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
-from requests import packages, get, session
+from requests import packages, get
 from cookies import Cookies
 from fake_useragent import UserAgent
-from colorama import init, Fore, Back, Style
+from colorama import init, Fore
 from gevent.lock import RLock
 from gevent.pool import Pool
 import gevent
@@ -251,13 +251,6 @@ class HttpScanner(object):
         """
         self.args = args
 
-        # Pool
-        if self.args.threads > len(self.urls):
-            print('Too many threads! Fixing threads count to %i' % len(self.urls))
-            self.pool = Pool(len(self.urls))
-        else:
-            self.pool = Pool(self.args.threads)
-
         # Session
         self.session = requesocks.session()
         self.session.timeout = self.args.timeout
@@ -326,6 +319,13 @@ class HttpScanner(object):
         a = args
         a.urls_count = len(self.urls)
         self.output = Output(a)
+
+        # Pool
+        if self.args.threads > len(self.urls):
+            print('Too many threads! Fixing threads count to %i' % len(self.urls))
+            self.pool = Pool(len(self.urls))
+        else:
+            self.pool = Pool(self.args.threads)
 
     def __file_to_list(self, filename):
         """
