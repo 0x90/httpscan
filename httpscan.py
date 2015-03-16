@@ -398,6 +398,7 @@ class HttpScanner(object):
         :return:
         """
         self.output.write_log('Signal caught. Stopping...', logging.WARNING)
+        print('Signal caught. Stopping...')
         self.stop()
 
     def start(self):
@@ -418,7 +419,7 @@ class HttpScanner(object):
         Stop scan
         :return:
         """
-        self.pool.kill()
+        self.pool.kill(block=True)
         # TODO: add saving status via pickle
 
 
