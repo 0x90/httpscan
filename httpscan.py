@@ -196,17 +196,22 @@ class Output(object):
         if self.logger is not None:
             self.logger.info('%s %s %i' % (url, response.status_code, len(response.text)))
 
-        # Write to CSV file
-        if self.csv is not None:
-            self.csv.writerow([parsed['url'], parsed['status'], parsed['length'], parsed['headers']])
+        # Filter responses and save responses that are matching ignore, allow rules
+        if (self.args.allow is None and self.args.ignore is None) or \
+                (self.args.allow is not None and response.status_code in self.args.allow) or \
+                (self.args.ignore is not None and response.status_code not in self.args.ignore):
 
-        # Write to JSON file
-        if self.json is not None:
-            self.json.write(unicode(dumps(parsed, ensure_ascii=False)))
+            # Write to CSV file
+            if self.csv is not None:
+                self.csv.writerow([parsed['url'], parsed['status'], parsed['length'], parsed['headers']])
 
-        # Save contents to file
-        if self.dump is not None:
-            self.write_dump(url, response)
+            # Write to JSON file
+            if self.json is not None:
+                self.json.write(unicode(dumps(parsed, ensure_ascii=False)))
+
+            # Save contents to file
+            if self.dump is not None:
+                self.write_dump(url, response)
 
         # Realse lock
         self.lock.release()
@@ -388,12 +393,8 @@ class HttpScanner(object):
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
             return None
 
-        # Filter responses and save responses that are matching ignore, allow rules
-        if (self.args.allow is None and self.args.ignore is None) or \
-                (self.args.allow is not None and response.status_code in self.args.allow) or \
-                (self.args.ignore is not None and response.status_code not in self.args.ignore):
-            self.output.write(url, response)
 
+        self.output.write(url, response)
         return response
 
     def signal_handler(self):
@@ -423,7 +424,7 @@ class HttpScanner(object):
         Stop scan
         :return:
         """
-        self.pool.kill(block=True)
+        self.pool.kill(block=True, timeout=4)
         # TODO: add saving status via pickle
 
 
