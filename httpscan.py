@@ -243,7 +243,6 @@ class Output(object):
         if self.logger is None:
             return
 
-        self.lock.acquire()
         if loglevel == logging.INFO:
             self.logger.info(msg)
         elif loglevel == logging.DEBUG:
@@ -252,7 +251,7 @@ class Output(object):
             self.logger.error(msg)
         elif loglevel == logging.WARNING:
             self.logger.warning(msg)
-        self.lock.release()
+
 
 
 class HttpScanner(object):
