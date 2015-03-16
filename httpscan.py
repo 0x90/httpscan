@@ -6,12 +6,13 @@
 # Feel free to contribute.
 #
 # Usage example:
-# ./httpscan.py hosts.txt urls.txt --threads 5 -oC test.csv -r -R -D -L scan.log
+# ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -oC test.csv -r -R -D -L scan.log
 #
 __author__ = '090h'
 __license__ = 'GPL'
+__version__ = '0.3'
 
-from logging import StreamHandler, FileHandler, Formatter, getLogger, ERROR, INFO, DEBUG, basicConfig
+
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from sys import exit
 from os import path, makedirs
@@ -22,23 +23,31 @@ from json import dumps
 import cookielib
 import httplib
 import io
+import logging
+import signal
 
 # External dependencied
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
 from requests import packages, get
 from cookies import Cookies
 from fake_useragent import UserAgent
+from colorama import init, Fore, Back, Style
 from gevent.lock import RLock
 from gevent.pool import Pool
-from colorama import init, Fore, Back, Style
+import gevent
 
+# Check Python version
+from platform import python_version
+if python_version() == '2.7.9':
+    print("Gevent doesn't work in proper way under Python 2.7.9")
+    print("https://github.com/gevent/gevent/issues/477")
+    exit(-1)
 
 def strnow():
     return datetime.now().strftime('%d.%m.%Y %H:%M:%S')
 
 
 class Output(object):
-
     def __init__(self, args):
         self.args = args
         self.lock = RLock()
@@ -46,53 +55,78 @@ class Output(object):
         # Colorama init
         init()
 
-        # Logger init
-        if args.log_file is not None:
-            self.logger = getLogger('httpscan_logger')
-            self.logger.setLevel(DEBUG if args.debug else INFO)
+        # Initialise logging
+        self._init_logger()
+        self._init_requests_output()
+
+        # Initialise output
+        self._init_csv()
+        self._init_json()
+        self._init_dump()
+
+    def _init_logger(self):
+        """ Init logger
+        :return: logger
+        """
+        if self.args.log_file is not None:
+            self.logger = logging.getLogger('httpscan_logger')
+            self.logger.setLevel(logging.DEBUG if self.args.debug else logging.INFO)
             # handler = StreamHandler() if args.log_file is None else FileHandler(args.log_file)
-            handler = FileHandler(args.log_file)
-            handler.setFormatter(Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d.%m.%Y %H:%M:%S'))
+            handler = logging.FileHandler(self.args.log_file)
+            handler.setFormatter(
+                logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d.%m.%Y %H:%M:%S'))
             self.logger.addHandler(handler)
         else:
             self.logger = None
 
-        # Enable requests lib debug output
-        if args.debug:
+    def _init_requests_output(self):
+        """ Init requests
+        :return: None
+        """
+        if self.args.debug:
+            # Enable requests lib debug output
             httplib.HTTPConnection.debuglevel = 5
             packages.urllib3.add_stderr_logger()
-            basicConfig()
-            getLogger().setLevel(DEBUG)
-            requests_log = getLogger("requests.packages.urllib3")
-            requests_log.setLevel(DEBUG)
+            logging.basicConfig()
+            logging.getLogger().setLevel(logging.DEBUG)
+            requests_log = logging.getLogger("requests.packages.urllib3")
+            requests_log.setLevel(logging.DEBUG)
             requests_log.propagate = True
         else:
             # Surpress InsecureRequestWarning: Unverified HTTPS request is being made
             packages.urllib3.disable_warnings()
 
+    def _init_csv(self):
         # CSV output
-        if args.output_csv is None:
+        if self.args.output_csv is None:
             self.csv = None
         else:
-            self.csv = writer(open(args.output_csv, 'wb'), delimiter=';', quoting=QUOTE_ALL)
+            self.csv = writer(open(self.args.output_csv, 'wb'), delimiter=';', quoting=QUOTE_ALL)
             self.csv.writerow(['url', 'status', 'length'])
 
+    def _init_json(self):
         # JSON output
-        self.json = None if args.output_json is None else io.open(args.output_json, 'w', encoding='utf-8')
+        self.json = None if self.args.output_json is None else io.open(self.args.output_json, 'w', encoding='utf-8')
 
+    def _init_dump(self):
         # Dump to file
-        self.dump = path.abspath(args.dump) if args.dump is not None else None
+        self.dump = path.abspath(self.args.dump) if self.args.dump is not None else None
 
-    def _parse(self, url, response):
+    def _parse_response(self, url, response):
         return {'url': url,
                 'status': response.status_code,
                 'length': int(response.headers['content-length']) if 'content-length' in response.headers else len(
                     response.text)}
 
     def write(self, url, response):
-        self.lock.acquire()
-        parsed = self._parse(url, response)
+        gevent.spawn(self.write_func, url, response)
 
+    def write_func(self, url, response):
+        # TODO: add async logging for speed up
+        self.lock.acquire()
+        parsed = self._parse_response(url, response)
+
+        # Print colored output
         if not self.args.progress_bar:
             if parsed['status'] == 200:
                 print(Fore.GREEN + '[%s] %s -> %i' % (strnow(), parsed['url'], parsed['status']))
@@ -133,17 +167,19 @@ class Output(object):
         with open(filename, 'wb') as f:
             f.write(response.content)
 
-    def write_log(self, msg, loglevel=INFO):
+    def write_log(self, msg, loglevel=logging.INFO):
         if self.logger is None:
             return
 
         self.lock.acquire()
-        if loglevel == INFO:
+        if loglevel == logging.INFO:
             self.logger.info(msg)
-        elif loglevel == DEBUG:
+        elif loglevel == logging.DEBUG:
             self.logger.debug(msg)
-        elif loglevel == ERROR:
+        elif loglevel == logging.ERROR:
             self.logger.error(msg)
+        elif loglevel == logging.WARNING:
+            self.logger.warning(msg)
         self.lock.release()
 
 
@@ -164,7 +200,6 @@ class HttpScanner(object):
                 'http') else host
 
             for url in urls:
-                # full_url = host + url if host.endswith('/') or url.startswith('/') else host + '/' + url
                 full_url = urljoin(host, url)
                 if full_url not in self.urls:
                     self.urls.append(full_url)
@@ -173,7 +208,7 @@ class HttpScanner(object):
 
         # Pool
         if self.args.threads > len(self.urls):
-            print('Too many threads! Fixing threads to %i' % len(self.urls))
+            print('Too many threads! Fixing threads count to %i' % len(self.urls))
             self.pool = Pool(len(self.urls))
         else:
             self.pool = Pool(self.args.threads)
@@ -192,7 +227,7 @@ class HttpScanner(object):
 
         if self.args.load_cookies is not None:
             if not path.exists(self.args.load_cookies) or not path.isfile(self.args.load_cookies):
-                self.output.write_log('Could not find cookie file: %s' % self.args.load_cookies, ERROR)
+                self.output.write_log('Could not find cookie file: %s' % self.args.load_cookies, logging.ERROR)
                 exit(-1)
 
             self.cookies = cookielib.MozillaCookieJar(self.args.load_cookies)
@@ -203,12 +238,12 @@ class HttpScanner(object):
 
     def __file_to_list(self, filename):
         if not path.exists(filename) or not path.isfile(filename):
-            self.output.write_log('File %s not found' % filename, ERROR)
+            self.output.write_log('File %s not found' % filename, logging.ERROR)
             exit(-1)
         return filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
 
     def scan(self, url):
-        self.output.write_log('Scanning  %s' % url, DEBUG)
+        self.output.write_log('Scanning  %s' % url, logging.DEBUG)
 
         # Fill headers
         headers = {}
@@ -223,32 +258,56 @@ class HttpScanner(object):
             response = get(url, timeout=self.args.timeout, headers=headers, allow_redirects=self.args.allow_redirects,
                            verify=False, cookies=self.cookies, auth=self.auth)
         except ConnectionError:
-            self.output.write_log('Connection error while quering %s' % url, ERROR)
+            self.output.write_log('Connection error while quering %s' % url, logging.ERROR)
             return None
         except HTTPError:
-            self.output.write_log('HTTP error while quering %s' % url, ERROR)
+            self.output.write_log('HTTP error while quering %s' % url, logging.ERROR)
             return None
         except Timeout:
-            self.output.write_log('Timeout while quering %s' % url, ERROR)
+            self.output.write_log('Timeout while quering %s' % url, logging.ERROR)
             return None
         except TooManyRedirects:
-            self.output.write_log('Too many redirects while quering %s' % url, ERROR)
+            self.output.write_log('Too many redirects while quering %s' % url, logging.ERROR)
             return None
         except Exception:
-            self.output.write_log('Unknown exception while quering %s' % url, ERROR)
+            self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
             return None
 
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
-            (self.args.allow is not None and response.status_code in self.args.allow) or \
-            (self.args.ignore is not None and response.status_code not in self.args.ignore):
+                (self.args.allow is not None and response.status_code in self.args.allow) or \
+                (self.args.ignore is not None and response.status_code not in self.args.ignore):
             self.output.write(url, response)
 
-        return response
+    def signal_handler(self):
 
-    def run(self):
-        results = self.pool.map(self.scan, self.urls)
-        return results
+        pass
+
+    def start(self):
+        # Set SIGINT/SIGTERM handler
+        gevent.signal(signal.SIGTERM, self.stop)
+        gevent.signal(signal.SIGINT, self.stop)
+
+        # Start scanning
+        self.pool.map(self.scan, self.urls)
+
+    def stop(self):
+        self.output.write_log('Ctrl+C caught. Stopping...', logging.WARNING)
+        # gevent.killall(workers)
+
+        # TODO: add saving status via pickle
+        pass
+
+
+def http_scan(args):
+    hs = HttpScanner(args)
+    hs.start()
+    start = datetime.now()
+
+    print(Fore.RESET + Back.RESET + Style.RESET_ALL + 'Statisitcs:')
+    print('Scan started %s' % start.strftime('%d.%m.%Y %H:%M:%S'))
+    finish = datetime.now()
+    print('Scan finished %s' % finish.strftime('%d.%m.%Y %H:%M:%S'))
 
 
 def main():
@@ -264,6 +323,7 @@ def main():
     group.add_argument('-t', '--timeout', type=int, default=10, help='HTTP scan timeout')
     group.add_argument('-T', '--threads', type=int, default=5, help='threads count')
     group.add_argument('-r', '--allow-redirects', action='store_true', help='follow redirects')
+    group.add_argument('-p', '--proxy', help='HTTP proxy to use (http://user:pass@127.0.0.1:8080)')
     group.add_argument('-a', '--auth', help='HTTP Auth user:password')
     group.add_argument('-c', '--cookies', help='cookies to send during scan')
     group.add_argument('-C', '--load-cookies', help='load cookies from specified file')
@@ -285,26 +345,16 @@ def main():
     group.add_argument('-oJ', '--output-json', help='output results to JSON file')
     # group.add_argument('-oD', '--output-database', help='output results to database via SQLAlchemy')
     # group.add_argument('-oX', '--output-xml', help='output results to XML file')
-    group.add_argument('-P', '--progress-bar', action='store_true', help='show scanning progress')
-
+    # group.add_argument('-P', '--progress-bar', action='store_true', help='show scanning progress')
 
     # Debug and logging options
-    group = parser.add_argument_group('Debug logging options')
+    group = parser.add_argument_group('Debug output and logging options')
     group.add_argument('-D', '--debug', action='store_true', help='write program debug output to file')
     group.add_argument('-L', '--log-file', help='debug log path')
-    args = parser.parse_args()
 
-    start = datetime.now()
-    try:
-        HttpScanner(args).run()
-    except KeyboardInterrupt:
-        # TODO: add signal handling
-        print(Fore.RESET + Back.RESET + Style.RESET_ALL)
-        print('Ctrl+C catched')
-    print(Fore.RESET + Back.RESET + Style.RESET_ALL + 'Statisitcs:')
-    print('Scan started %s' % start.strftime('%d.%m.%Y %H:%M:%S'))
-    finish = datetime.now()
-    print('Scan finished %s' % finish.strftime('%d.%m.%Y %H:%M:%S'))
+    # Parse args and start scanning
+    args = parser.parse_args()
+    http_scan(args)
 
 
 if __name__ == '__main__':
