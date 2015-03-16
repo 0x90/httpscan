@@ -302,10 +302,9 @@ class HttpScanner(object):
 
         # Proxy
         if self.args.proxy is not None:
-            if self.args.proxy.lower().startswith('https'):
-                self.session.proxies = {"https": self.args.proxy}
-            else:
-                self.session.proxies = {"http": self.args.proxy}
+            self.session.proxies = {"https": self.args.proxy,
+                                    "http": self.args.proxy}
+
 
         # Auth
         if self.args.auth is not None:
@@ -438,7 +437,7 @@ def main():
     group.add_argument('-t', '--timeout', type=int, default=10, help='scan timeout')
     group.add_argument('-T', '--threads', type=int, default=5, help='threads count')
     group.add_argument('-r', '--allow-redirects', action='store_true', help='follow redirects')
-    group.add_argument('-p', '--proxy', help='HTTP proxy to use (http://user:pass@127.0.0.1:8080)')
+    group.add_argument('-p', '--proxy', help='HTTP/SOCKS proxy to use (http://user:pass@127.0.0.1:8080)')
     group.add_argument('--tor', action='store_true', help='Use TOR as proxy')
     group.add_argument('-a', '--auth', help='HTTP Auth user:password')
     group.add_argument('-c', '--cookies', help='cookies to send during scan')
