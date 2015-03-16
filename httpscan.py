@@ -251,11 +251,6 @@ class HttpScanner(object):
         """
         self.args = args
 
-        # Output
-        a = args
-        a.urls_count = len(self.urls)
-        self.output = Output(a)
-
         # Pool
         if self.args.threads > len(self.urls):
             print('Too many threads! Fixing threads count to %i' % len(self.urls))
@@ -285,7 +280,6 @@ class HttpScanner(object):
         if self.args.proxy is not None:
             self.session.proxies = {"https": self.args.proxy,
                                     "http": self.args.proxy}
-
 
         # Auth
         if self.args.auth is not None:
@@ -327,6 +321,11 @@ class HttpScanner(object):
                     self.urls.append(full_url)
 
         print('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), len(self.urls)))
+
+        # Output
+        a = args
+        a.urls_count = len(self.urls)
+        self.output = Output(a)
 
     def __file_to_list(self, filename):
         """
