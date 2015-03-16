@@ -251,6 +251,7 @@ class HttpScanner(object):
         self.args = args
 
         # Reading files
+        print("Reading files. Wait a moment...")
         hosts = self.__file_to_list(args.hosts)
         urls = self.__file_to_list(args.urls)
 
