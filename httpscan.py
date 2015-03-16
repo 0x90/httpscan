@@ -263,6 +263,7 @@ class HttpScanner(object):
 
         # TOR
         if args.tor:
+            print("TOR usage detected. Making some checks.")
             self.session.proxies = {
                 'http': 'socks5://127.0.0.1:9050',
                 'https': 'socks5://127.0.0.1:9050'
