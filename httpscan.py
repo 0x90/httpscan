@@ -50,12 +50,6 @@ import gevent
 import requesocks
 
 
-
-
-
-
-
-
 class Output(object):
     def __init__(self, args):
         self.args = args
@@ -144,7 +138,11 @@ class Output(object):
         :param response:
         :return:
         """
-        length = int(response.headers['content-length']) if 'content-length' in response.headers else len(response.text)
+        try:
+            length = int(response.headers['content-length']) if 'content-length' in response.headers else len(response.text)
+        except:
+            # TODO: add proper check and encoding
+            length = 0
         return {'url': url,
                 'status': response.status_code,
                 'length': length,
@@ -405,6 +403,7 @@ class HttpScanner(object):
         self.output.write_log('Signal caught. Stopping...', logging.WARNING)
         print('Signal caught. Stopping...')
         self.stop()
+        exit(signal.SIGINT)
 
     def start(self):
         """
