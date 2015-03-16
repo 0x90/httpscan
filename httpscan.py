@@ -291,14 +291,15 @@ class HttpScanner(object):
         # TOR
         if args.tor:
             self.session.proxies = {
-                'http': 'socks5://127.0.0.1:9150',
-                'https': 'socks5://127.0.0.1:9150'
+                'http': 'socks5://127.0.0.1:9050',
+                'https': 'socks5://127.0.0.1:9050'
             }
             url = 'http://ifconfig.me/ip'
-            response = get(url)
-            print('Real IP: {}'.format(response.text.strip()))
-            response = self.session.get(url)
-            print 'TOR IP: {}'.format(response.text.strip())
+            real_ip = get(url).text.strip()
+            tor_ip = self.session.get(url).text.strip()
+            print('Real IP: %s TOR IP: %s' % (real_ip, tor_ip))
+            if real_ip == tor_ip:
+                print("TOR doesn't work! Stop to be secure.")
 
         # Proxy
         if self.args.proxy is not None:
