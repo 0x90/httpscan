@@ -62,6 +62,9 @@ class Output(object):
         self._init_json()
         self._init_dump()
 
+        # Initialise percentage
+        self.urls_scanned = 0
+
     def _init_logger(self):
         """
         Init logger
@@ -105,7 +108,7 @@ class Output(object):
             self.csv = None
         else:
             self.csv = writer(open(self.args.output_csv, 'wb'), delimiter=';', quoting=QUOTE_ALL)
-            self.csv.writerow(['url', 'status', 'length'])
+            self.csv.writerow(['url', 'status', 'length', 'headers'])
 
     def _init_json(self):
         """
@@ -130,10 +133,12 @@ class Output(object):
         :param response:
         :return:
         """
+        length = int(response.headers['content-length']) if 'content-length' in response.headers else len(response.text)
         return {'url': url,
                 'status': response.status_code,
-                'length': int(response.headers['content-length']) if 'content-length' in response.headers else len(
-                    response.text)}
+                'length': length,
+                'headers': str(response.headers)
+                }
 
     def _strnow(self):
         """
@@ -162,14 +167,19 @@ class Output(object):
         self.lock.acquire()
         parsed = self._parse_response(url, response)
 
+        # Calculate progreess
+        self.urls_scanned += 1
+        percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned)/self.args.urls_count)
+        # TODO: add stats
+
         # Print colored output
-        if not self.args.progress_bar:
-            if parsed['status'] == 200:
-                print(Fore.GREEN + '[%s] %s -> %i' % (self._strnow(), parsed['url'], parsed['status']))
-            elif 400 <= parsed['status'] < 500:
-                print(Fore.RED + '[%s] %s -> %i' % (self._strnow(), parsed['url'], parsed['status']))
-            else:
-                print(Fore.YELLOW + '[%s] %s -> %i' % (self._strnow(), parsed['url'], parsed['status']))
+        out = '[%s] [%s]\t%s -> %i' % (self._strnow(), percentage, parsed['url'], parsed['status'])
+        if parsed['status'] == 200:
+            print(Fore.GREEN + out)
+        elif 400 <= parsed['status'] < 500:
+            print(Fore.RED + out)
+        else:
+            print(Fore.YELLOW + out)
 
         # Write to log file
         if self.logger is not None:
@@ -177,7 +187,7 @@ class Output(object):
 
         # Write to CSV file
         if self.csv is not None:
-            self.csv.writerow([parsed['url'], parsed['status'], parsed['length']])
+            self.csv.writerow([parsed['url'], parsed['status'], parsed['length'], parsed['headers']])
 
         # Write to JSON file
         if self.json is not None:
@@ -239,11 +249,11 @@ class HttpScanner(object):
         :return:
         """
         self.args = args
-        self.output = Output(args)
 
         # Reading files
         hosts = self.__file_to_list(args.hosts)
         urls = self.__file_to_list(args.urls)
+
 
         # Generating full url list
         self.urls = []
@@ -257,6 +267,12 @@ class HttpScanner(object):
                     self.urls.append(full_url)
 
         print('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), len(self.urls)))
+
+        # Output
+        a = args
+        a.urls_count = len(self.urls)
+        self.output = Output(a)
+
 
         # Pool
         if self.args.threads > len(self.urls):
@@ -388,7 +404,8 @@ def http_scan(args):
     HttpScanner(args).start()
 
     # Show stats
-    print(Fore.RESET + Back.RESET + Style.RESET_ALL + 'Statisitcs:')
+    # print(Fore.RESET + Back.RESET + Style.RESET_ALL + 'Statisitcs:')
+    print(Fore.RESET + 'Statisitcs:')
     print('Scan started %s' % start.strftime('%d.%m.%Y %H:%M:%S'))
     print('Scan finished %s' % datetime.now().strftime('%d.%m.%Y %H:%M:%S'))
 
