@@ -23,9 +23,9 @@ from csv import writer, QUOTE_ALL
 from json import dumps
 from cookielib import MozillaCookieJar
 from httplib import HTTPConnection
-import io
 import logging
 import signal
+import io
 
 # External dependencied
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
@@ -35,6 +35,7 @@ from fake_useragent import UserAgent
 from colorama import init, Fore
 from gevent.lock import RLock
 from gevent.pool import Pool
+from gevent import monkey, spawn
 import gevent
 import requesocks
 
@@ -44,6 +45,10 @@ if python_version() == '2.7.9':
     print("Gevent doesn't work in proper way under Python 2.7.9")
     print("https://github.com/gevent/gevent/issues/477")
     exit(-1)
+
+
+
+monkey.patch_all()
 
 
 class Output(object):
@@ -155,7 +160,7 @@ class Output(object):
         :param response:
         :return:
         """
-        gevent.spawn(self.write_func, url, response)
+        spawn(self.write_func, url, response)
 
     def write_func(self, url, response):
         """
@@ -397,7 +402,7 @@ class HttpScanner(object):
         # Set signal handler
         gevent.signal(signal.SIGTERM, self.signal_handler)
         gevent.signal(signal.SIGINT, self.signal_handler)
-        gevent.signal(signal.SIGQUIT, self.signal_handler)
+        # gevent.signal(signal.SIGQUIT, self.signal_handler)
 
         # Start scanning
         self.pool.map(self.scan, self.urls)
