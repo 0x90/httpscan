@@ -192,7 +192,7 @@ class Output(object):
 
         # Write to log file
         if self.logger is not None:
-            self.logger.info('%s %s %i' % (url, response.status_code, len(response.text)))
+            self.logger.info('%s %s %i' % (url, response.status_code, parsed['length']))
 
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
