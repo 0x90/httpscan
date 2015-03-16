@@ -298,7 +298,7 @@ class HttpScanner(object):
             response = get(url)
             print('Real IP: {}'.format(response.text.strip()))
             response = self.session.get(url)
-            print 'TOR I{: {}'.format(response.text.strip())
+            print 'TOR IP: {}'.format(response.text.strip())
 
         # Proxy
         if self.args.proxy is not None:
