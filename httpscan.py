@@ -29,13 +29,14 @@ import signal
 
 # External dependencied
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
-from requests import packages, get
+from requests import packages, get, session
 from cookies import Cookies
 from fake_useragent import UserAgent
 from colorama import init, Fore, Back, Style
 from gevent.lock import RLock
 from gevent.pool import Pool
 import gevent
+import requesocks
 
 # Check Python version
 from platform import python_version
@@ -257,6 +258,7 @@ class HttpScanner(object):
 
 
         # Generating full url list
+        print("Generating deduplicated url list.")
         self.urls = []
         for host in hosts:
             host = 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
@@ -282,25 +284,33 @@ class HttpScanner(object):
         else:
             self.pool = Pool(self.args.threads)
 
+        # Session
+        self.session = requesocks.session()
+        self.session.timeout = self.args.timeout
+        self.session.verify = False
+
+        # TOR
+        if args.tor:
+            self.session.proxies = {
+                'http': 'socks5://127.0.0.1:9150',
+                'https': 'socks5://127.0.0.1:9150'
+            }
+
         # Proxy
-        self.proxy = {}
         if self.args.proxy is not None:
             if self.args.proxy.lower().startswith('https'):
-                self.proxy = {"https": self.args.proxy}
+                self.session.proxies = {"https": self.args.proxy}
             else:
-                self.proxy = {"http": self.args.proxy}
+                self.session.proxies = {"http": self.args.proxy}
 
         # Auth
-        if self.args.auth is None:
-            self.auth = ()
-        else:
+        if self.args.auth is not None:
             items = self.args.auth.split(':')
-            self.auth = (items[0], items[1])
+            self.session.auth = (items[0], items[1])
 
         # Cookies
-        self.cookies = {}
         if self.args.cookies is not None:
-            self.cookies = Cookies.from_request(self.args.cookies)
+            self.session.cookies = Cookies.from_request(self.args.cookies)
 
         # Cookies from file
         if self.args.load_cookies is not None:
@@ -308,8 +318,9 @@ class HttpScanner(object):
                 self.output.write_log('Could not find cookie file: %s' % self.args.load_cookies, logging.ERROR)
                 exit(-1)
 
-            self.cookies = MozillaCookieJar(self.args.load_cookies)
-            self.cookies.load()
+            cj = MozillaCookieJar(self.args.load_cookies)
+            cj.load()
+            self.session.cookies = cj
 
         # User-Agent
         self.ua = UserAgent() if self.args.random_agent else None
@@ -331,7 +342,7 @@ class HttpScanner(object):
         :param url: url to scan
         :return: HTTP response
         """
-        self.output.write_log('Scanning  %s' % url, logging.DEBUG)
+        self.output.write_log('Scanning %s' % url, logging.DEBUG)
 
         # Fill headers
         headers = {}
@@ -343,8 +354,7 @@ class HttpScanner(object):
         # Query URL and handle exceptions
         try:
             # TODO: add support for user:password in URL
-            response = get(url, timeout=self.args.timeout, headers=headers, allow_redirects=self.args.allow_redirects,
-                           verify=False, cookies=self.cookies, auth=self.auth, proxies=self.proxy)
+            response = self.session.get(url, headers=headers, allow_redirects=self.args.allow_redirects)
         except ConnectionError:
             self.output.write_log('Connection error while quering %s' % url, logging.ERROR)
             return None
@@ -425,6 +435,7 @@ def main():
     group.add_argument('-T', '--threads', type=int, default=5, help='threads count')
     group.add_argument('-r', '--allow-redirects', action='store_true', help='follow redirects')
     group.add_argument('-p', '--proxy', help='HTTP proxy to use (http://user:pass@127.0.0.1:8080)')
+    group.add_argument('--tor', action='store_true', help='Use TOR as proxy')
     group.add_argument('-a', '--auth', help='HTTP Auth user:password')
     group.add_argument('-c', '--cookies', help='cookies to send during scan')
     group.add_argument('-C', '--load-cookies', help='load cookies from specified file')
