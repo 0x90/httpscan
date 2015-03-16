@@ -275,7 +275,11 @@ class HttpScanner(object):
             }
             url = 'http://ifconfig.me/ip'
             real_ip = get(url).text.strip()
-            tor_ip = self.session.get(url).text.strip()
+            try:
+                tor_ip = self.session.get(url).text.strip()
+            except:
+                print("TOR socks proxy doesn't semm to be working.")
+                exit(-1)
             print('Real IP: %s TOR IP: %s' % (real_ip, tor_ip))
             if real_ip == tor_ip:
                 print("TOR doesn't work! Stop to be secure.")
