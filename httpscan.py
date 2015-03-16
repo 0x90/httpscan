@@ -13,6 +13,16 @@ __author__ = '090h'
 __license__ = 'GPL'
 __version__ = '0.3'
 
+# Check Python version
+from platform import python_version
+if python_version() == '2.7.9':
+    print("Gevent doesn't work in proper way under Python 2.7.9")
+    print("https://github.com/gevent/gevent/issues/477")
+    exit(-1)
+
+from gevent import monkey
+monkey.patch_all()
+
 # Basic dependencies
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from sys import exit
@@ -27,7 +37,7 @@ import logging
 import signal
 import io
 
-# External dependencied
+# External dependencies
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
 from requests import packages, get
 from cookies import Cookies
@@ -35,20 +45,15 @@ from fake_useragent import UserAgent
 from colorama import init, Fore
 from gevent.lock import RLock
 from gevent.pool import Pool
-from gevent import monkey, spawn
+from gevent import spawn
 import gevent
 import requesocks
 
-# Check Python version
-from platform import python_version
-if python_version() == '2.7.9':
-    print("Gevent doesn't work in proper way under Python 2.7.9")
-    print("https://github.com/gevent/gevent/issues/477")
-    exit(-1)
 
 
 
-monkey.patch_all()
+
+
 
 
 class Output(object):
