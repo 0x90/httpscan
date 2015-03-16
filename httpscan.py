@@ -276,7 +276,6 @@ class HttpScanner(object):
         a.urls_count = len(self.urls)
         self.output = Output(a)
 
-
         # Pool
         if self.args.threads > len(self.urls):
             print('Too many threads! Fixing threads count to %i' % len(self.urls))
@@ -295,6 +294,11 @@ class HttpScanner(object):
                 'http': 'socks5://127.0.0.1:9150',
                 'https': 'socks5://127.0.0.1:9150'
             }
+            url = 'http://ifconfig.me/ip'
+            response = get(url)
+            print('Real IP: {}'.format(response.text.strip()))
+            response = self.session.get(url)
+            print 'TOR I{: {}'.format(response.text.strip())
 
         # Proxy
         if self.args.proxy is not None:
