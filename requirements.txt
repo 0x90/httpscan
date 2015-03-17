@@ -4,7 +4,7 @@ fake-useragent==0.0.7
 gevent==1.0.1
 greenlet==0.4.5
 requesocks==0.10.8
-requests==2.5.3
+requests==2.6.0
 scapy==2.3.1
 six==1.9.0
 SQLAlchemy==0.9.8
