@@ -347,7 +347,8 @@ class HttpScannerOutput(object):
         self.log_lock.release()
 
     def print_and_log(self, msg, loglevel=logging.INFO):
-        print(msg)
+        # TODO: make separate logging
+        print('[%s] %s' % (msg, strnow()))
         self.write_log(msg, loglevel)
 
 
