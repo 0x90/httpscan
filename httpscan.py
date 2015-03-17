@@ -346,6 +346,10 @@ class HttpScannerOutput(object):
 
         self.log_lock.release()
 
+    def print_and_log(self, msg, loglevel=logging.INFO):
+        print(msg)
+        self.write_log(msg, loglevel)
+
 
 class HttpScanner(object):
     def __init__(self, args):
@@ -410,7 +414,7 @@ class HttpScanner(object):
             try:
                 real_ip = get(url).text.strip()
             except Exception as exception:
-                self.output.write_log("Couldn't get real IP address. Check yout internet connection.", logging.ERROR)
+                self.output.print_and_log("Couldn't get real IP address. Check yout internet connection.", logging.ERROR)
                 self.output.write_log(str(exception), logging.ERROR)
                 exit(-1)
 
@@ -418,14 +422,14 @@ class HttpScanner(object):
             try:
                 tor_ip = self.session.get(url).text.strip()
             except Exception as exception:
-                self.output.write_log("TOR socks proxy doesn't seem to be working.", logging.ERROR)
+                self.output.print_and_log("TOR socks proxy doesn't seem to be working.", logging.ERROR)
                 self.output.write_log(str(exception), logging.ERROR)
                 exit(-1)
 
             # Show IP addresses
-            self.output.write_log('Real IP: %s TOR IP: %s' % (real_ip, tor_ip), logging.INFO)
+            self.output.print_and_log('Real IP: %s TOR IP: %s' % (real_ip, tor_ip), logging.INFO)
             if real_ip == tor_ip:
-                self.output.write_log("TOR doesn't work! Stop to be secure.", logging.ERROR)
+                self.output.print_and_log("TOR doesn't work! Stop to be secure.", logging.ERROR)
                 exit(-1)
 
         # Proxy
@@ -445,7 +449,7 @@ class HttpScanner(object):
         # Cookies from file
         if self.args.load_cookies is not None:
             if not path.exists(self.args.load_cookies) or not path.isfile(self.args.load_cookies):
-                self.output.write_log('Could not find cookie file: %s' % self.args.load_cookies, logging.ERROR)
+                self.output.print_and_log('Could not find cookie file: %s' % self.args.load_cookies, logging.ERROR)
                 exit(-1)
 
             cj = MozillaCookieJar(self.args.load_cookies)
@@ -466,7 +470,7 @@ class HttpScanner(object):
         :return: list of lines
         """
         if not path.exists(filename) or not path.isfile(filename):
-            self.output.write_log('File %s not found' % filename, logging.ERROR)
+            self.output.print_and_log('File %s not found' % filename, logging.ERROR)
             exit(-1)
 
         # Preparing lines list
