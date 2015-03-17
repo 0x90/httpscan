@@ -490,23 +490,26 @@ class HttpScanner(object):
                 self.hosts_queue.task_done()
 
     def _head_available(self, host):
+        """
+        Determine if HEAD requests is allowed
+        :param host:
+        :return:
+        """
         # Trying to use OPTIONS request
         try:
             response = self.session.options(host)
+            o = response.headers['allow'] if 'allow' in response.headers else None
+            if o is not None and o.find('HEAD') != -1:
+                return True
         except:
             # TODO: fix
             pass
-        o = response.headers['allow'] if 'allow' in response.headers else None
 
-        # Determine if HEAD requests is allowed
-        if o is not None:
-            head_available = False if o.find('HEAD') == -1 else True
-        else:
-            try:
-                head_available = False if self.session.head(host).status_code == 405 else True
-            except:
-                #TODO: fix
-                return False
+        try:
+            head_available = False if self.session.head(host).status_code == 405 else True
+        except:
+            #TODO: fix
+            return False
 
         return head_available
 
@@ -647,7 +650,7 @@ def main():
 
     # scan options
     group = parser.add_argument_group('Scan options')
-    group.add_argument('-t', '--timeout', type=int, default=10, help='scan timeout')
+    group.add_argument('-t', '--timeout', type=int, default=5, help='scan timeout')
     group.add_argument('-T', '--threads', type=int, default=5, help='threads count')
     group.add_argument('-m', '--max-retries', type=int, default=3, help='Max retries for the request')
     group.add_argument('-p', '--proxy', help='HTTP/SOCKS proxy to use (http://user:pass@127.0.0.1:8080)')
