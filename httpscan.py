@@ -22,7 +22,6 @@ if python_version() == '2.7.9':
 
 # Gevent monkey patching
 from gevent import monkey
-
 monkey.patch_all()
 
 # Basic dependencies
@@ -44,7 +43,7 @@ from sqlalchemy_utils.functions import create_database, database_exists
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
 from requests.adapters import HTTPAdapter, DEFAULT_RETRIES
-from requests import packages, get, options, head
+from requests import packages, get
 from requesocks import session
 from cookies import Cookies
 from fake_useragent import UserAgent
@@ -348,7 +347,7 @@ class HttpScannerOutput(object):
 
     def print_and_log(self, msg, loglevel=logging.INFO):
         # TODO: make separate logging
-        print('[%s] %s' % (msg, strnow()))
+        print('[%s] %s' % (strnow(), msg))
         self.write_log(msg, loglevel)
 
 
@@ -596,7 +595,7 @@ class HttpScanner(object):
         self.output.write_log('Signal caught. Stopping...', logging.WARNING)
         print('Signal caught. Stopping...')
         self.stop()
-        # exit(signal.SIGINT)
+        exit(signal.SIGINT)
 
     def start(self):
         """
