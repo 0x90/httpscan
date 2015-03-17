@@ -206,8 +206,8 @@ class Output(object):
 
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
-                (self.args.allow is not None and response.status_code in self.args.allow) or \
-                (self.args.ignore is not None and response.status_code not in self.args.ignore):
+                (self.args.allow is not None and parsed['status'] in self.args.allow) or \
+                (self.args.ignore is not None and parsed['status'] not in self.args.ignore):
 
             # Write to CSV file
             if self.csv is not None:
@@ -234,11 +234,11 @@ class Output(object):
         if response is None:
             return
 
+        # Generate folder and file path
         parsed = urlparse(url)
         host_folder = path.join(self.dump, parsed.netloc)
         p, f = path.split(parsed.path)
         folder = path.join(host_folder, p[1:])
-
         if not path.exists(folder):
             makedirs(folder)
         filename = path.join(folder, f)
@@ -249,6 +249,7 @@ class Output(object):
         except:
             # TODO: add proper exception handling
             return
+
         # Save contents to file
         f = open(filename, 'wb')
         f.write(content)
