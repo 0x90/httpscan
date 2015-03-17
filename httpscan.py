@@ -2,12 +2,11 @@
 # -*- encoding: utf-8 -*-
 #
 # Simple Multithreaded HTTP scanner.
-#
-# Not properly tested and bugfixed.
 # Feel free to contribute.
 #
 # Usage example:
-# ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -oC test.csv -r -U -L scan.log
+#
+#   ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -oC test.csv -r -U -L scan.log --tor
 #
 __author__ = '090h'
 __license__ = 'GPL'
@@ -21,13 +20,13 @@ if python_version() == '2.7.9':
     print("https://github.com/gevent/gevent/issues/477")
     exit(-1)
 
+# Gevent monkey patching
 from gevent import monkey
-
 monkey.patch_all()
 
 # Basic dependencies
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
-from sys import exit, exc_info
+from sys import exit
 from os import path, makedirs
 from datetime import datetime
 from urlparse import urlparse, urljoin
@@ -50,6 +49,14 @@ from gevent.pool import Pool
 from gevent import spawn
 import gevent
 import requesocks
+
+
+def strnow():
+    """
+    Current datetime
+    :return: string for current datetime
+    """
+    return datetime.now().strftime('%d.%m.%Y %H:%M:%S')
 
 
 class Output(object):
@@ -80,7 +87,6 @@ class Output(object):
         if self.args.log_file is not None:
             self.logger = logging.getLogger('httpscan_logger')
             self.logger.setLevel(logging.DEBUG if self.args.debug else logging.INFO)
-            # handler = StreamHandler() if args.log_file is None else FileHandler(args.log_file)
             handler = logging.FileHandler(self.args.log_file)
             handler.setFormatter(
                 logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%d.%m.%Y %H:%M:%S'))
@@ -150,21 +156,14 @@ class Output(object):
         try:
             length = int(response.headers['content-length']) if 'content-length' in response.headers else len(
                 response.text)
-        except:
-            # TODO: add proper check and encoding
+        except Exception as exception:
+            self.write_log("Exception while getting content length for URL: %s Exception: %s" % (url, str(exception)))
             length = 0
         return {'url': url,
                 'status': response.status_code,
                 'length': length,
                 'headers': str(response.headers)
                 }
-
-    def _strnow(self):
-        """
-        Current datetime
-        :return: string for current datetime
-        """
-        return datetime.now().strftime('%d.%m.%Y %H:%M:%S')
 
     def write(self, url, response, exception):
         """
@@ -191,17 +190,10 @@ class Output(object):
         percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
         # TODO: add detailed stats
 
-        # Parse excetion
-        exc_value = None
-        if exception is not None:
-            # exc_type, exc_value, exc_traceback = exc_info()
-            exc_value = str(exception)
-
         # Print colored output
-        if exception is None:
-            out = '[%s] [%s]\t%s -> %i' % (self._strnow(), percentage, parsed['url'], parsed['status'])
-        else:
-            out = '[%s] [%s]\t%s -> %i (%s)' % (self._strnow(), percentage, parsed['url'], parsed['status'], exc_value)
+        out = '[%s] [%s]\t%s -> %i' % (strnow(), percentage, parsed['url'], parsed['status'])
+        if exception is not None:
+            out += '(%s)' % str(exception)
         if parsed['status'] == 200:
             print(Fore.GREEN + out + Fore.RESET)
         elif 400 <= parsed['status'] < 500 or parsed['status'] == -1:
@@ -214,7 +206,7 @@ class Output(object):
             if exception is None:
                 self.logger.info('%s %s %i' % (url, parsed['status'], parsed['length']))
             else:
-                self.logger.info('%s %s %i %s' % (url, parsed['status'], parsed['length'], exc_value))
+                self.logger.info('%s %s %i %s' % (url, parsed['status'], parsed['length'], str(exception)))
 
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
@@ -258,8 +250,8 @@ class Output(object):
         # Get all content
         try:
             content = response.content
-        except:
-            # TODO: add proper exception handling
+        except Exception as exception:
+            self.write_log('Failed to get content for %s Exception: %s' % (url, str(exception)))
             return
 
         # Save contents to file
@@ -312,15 +304,28 @@ class HttpScanner(object):
                 'https': 'socks5://127.0.0.1:9050'
             }
             url = 'http://ifconfig.me/ip'
-            real_ip = get(url).text.strip()
+
+            real_ip, tor_ip = None, None
+
+            # Ger real IP address
+            try:
+                real_ip = get(url).text.strip()
+            except Exception as exception:
+                print("Couldn't get real IP address. Check yout internet connection.")
+                exit(01)
+
+            # Ger TOR IP address
             try:
                 tor_ip = self.session.get(url).text.strip()
-            except:
-                print("TOR socks proxy doesn't semm to be working.")
+            except Exception as exception:
+                print("TOR socks proxy doesn't seem to be working.")
                 exit(-1)
+
+            # Show IP addresses
             print('Real IP: %s TOR IP: %s' % (real_ip, tor_ip))
             if real_ip == tor_ip:
                 print("TOR doesn't work! Stop to be secure.")
+                exit(-1)
 
         # Proxy
         if self.args.proxy is not None:
@@ -350,12 +355,12 @@ class HttpScanner(object):
         self.ua = UserAgent() if self.args.random_agent else None
 
         # Reading files
-        print("Reading files. Wait a moment...")
+        print("Reading files.")
         hosts = self.__file_to_list(args.hosts)
         urls = self.__file_to_list(args.urls)
 
         # Generating full url list
-        print("Generating deduplicated url list.")
+        print("Generating deduplicated url list. Wait a moment...")
         self.urls = []
         for host in hosts:
             host = 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
@@ -365,18 +370,18 @@ class HttpScanner(object):
                 full_url = urljoin(host, url)
                 if full_url not in self.urls:
                     self.urls.append(full_url)
-
-        print('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), len(self.urls)))
+        urls_count = len(self.urls)
+        print('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), urls_count))
 
         # Output
         a = args
-        a.urls_count = len(self.urls)
+        a.urls_count = urls_count
         self.output = Output(a)
 
         # Pool
-        if self.args.threads > len(self.urls):
-            print('Too many threads! Fixing threads count to %i' % len(self.urls))
-            self.pool = Pool(len(self.urls))
+        if self.args.threads > urls_count:
+            print('Too many threads! Fixing threads count to %i' % urls_count)
+            self.pool = Pool(urls_count)
         else:
             self.pool = Pool(self.args.threads)
 
@@ -443,7 +448,7 @@ class HttpScanner(object):
         # Set signal handler
         gevent.signal(signal.SIGTERM, self.signal_handler)
         gevent.signal(signal.SIGINT, self.signal_handler)
-        # gevent.signal(signal.SIGQUIT, self.signal_handler)
+        gevent.signal(signal.SIGQUIT, self.signal_handler)
 
         # Start scanning
         self.pool.map(self.scan, self.urls)
@@ -458,16 +463,9 @@ class HttpScanner(object):
 
 
 def http_scan(args):
-    # Run scanner
-    start = datetime.now()
+    start = strnow()
     HttpScanner(args).start()
-
-    # Show stats
-    # print(Fore.RESET + Back.RESET + Style.RESET_ALL + 'Statisitcs:')
-    print(Fore.RESET + 'Statisitcs:')
-    print('Scan started %s' % start.strftime('%d.%m.%Y %H:%M:%S'))
-    print('Scan finished %s' % datetime.now().strftime('%d.%m.%Y %H:%M:%S'))
-
+    print(Fore.RESET + 'Statisitcs:\nScan started %s\nScan finished %s' % (start, strnow()))
 
 def main():
     parser = ArgumentParser('httpscan', description='Multithreaded HTTP scanner',
@@ -516,7 +514,6 @@ def main():
     # Parse args and start scanning
     args = parser.parse_args()
     http_scan(args)
-
 
 if __name__ == '__main__':
     main()
