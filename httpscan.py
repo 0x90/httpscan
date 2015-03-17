@@ -292,6 +292,11 @@ class HttpScanner(object):
         """
         self.args = args
 
+        # Output
+        # a = args
+        # a.urls_count = urls_count
+        self.output = Output(args)
+
         # Session
         self.session = requesocks.session()
         self.session.timeout = self.args.timeout
@@ -299,35 +304,35 @@ class HttpScanner(object):
 
         # TOR
         if args.tor:
-            print("TOR usage detected. Making some checks.")
+            self.output.write_log("TOR usage detected. Making some checks.", logging.INFO)
             self.session.proxies = {
                 'http': 'socks5://127.0.0.1:9050',
                 'https': 'socks5://127.0.0.1:9050'
             }
-            url = 'http://ifconfig.me/ip'
 
+            url = 'http://ifconfig.me/ip'
             real_ip, tor_ip = None, None
 
             # Ger real IP address
             try:
                 real_ip = get(url).text.strip()
             except Exception as exception:
-                print("Couldn't get real IP address. Check yout internet connection.")
-                print(str(exception))
+                self.output.write_log("Couldn't get real IP address. Check yout internet connection.", logging.ERROR)
+                self.output.write_log(str(exception), logging.ERROR)
                 exit(-1)
 
             # Get TOR IP address
             try:
                 tor_ip = self.session.get(url).text.strip()
             except Exception as exception:
-                print("TOR socks proxy doesn't seem to be working.")
-                print(str(exception))
+                self.output.write_log("TOR socks proxy doesn't seem to be working.", logging.ERROR)
+                self.output.write_log(str(exception), logging.ERROR)
                 exit(-1)
 
             # Show IP addresses
-            print('Real IP: %s TOR IP: %s' % (real_ip, tor_ip))
+            self.output.write_log('Real IP: %s TOR IP: %s' % (real_ip, tor_ip), logging.INFO)
             if real_ip == tor_ip:
-                print("TOR doesn't work! Stop to be secure.")
+                self.output.write_log("TOR doesn't work! Stop to be secure.", logging.ERROR)
                 exit(-1)
 
         # Proxy
@@ -358,12 +363,12 @@ class HttpScanner(object):
         self.ua = UserAgent() if self.args.random_agent else None
 
         # Reading files
-        print("Reading files.")
+        self.output.write_log("Reading files.", logging.INFO)
         hosts = self.__file_to_list(args.hosts)
         urls = self.__file_to_list(args.urls)
 
         # Generating full url list
-        print("Generating deduplicated url list. Wait a moment...")
+        self.output.write_log("Generating deduplicated url list. Wait a moment...", logging.INFO)
         self.urls = []
         for host in hosts:
             host = 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
@@ -374,16 +379,17 @@ class HttpScanner(object):
                 if full_url not in self.urls:
                     self.urls.append(full_url)
         urls_count = len(self.urls)
-        print('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), urls_count))
+        self.output.write_log('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), urls_count), logging.INFO)
 
         # Output
-        a = args
-        a.urls_count = urls_count
-        self.output = Output(a)
+        # a = args
+        # a.urls_count = urls_count
+        # self.output = Output(a)
+        self.output.args.urls_count = urls_count
 
         # Pool
         if self.args.threads > urls_count:
-            print('Too many threads! Fixing threads count to %i' % urls_count)
+            self.output.write_log('Too many threads! Fixing threads count to %i' % urls_count, logging.WARNING)
             self.pool = Pool(urls_count)
         else:
             self.pool = Pool(self.args.threads)
