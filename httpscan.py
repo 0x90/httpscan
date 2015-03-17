@@ -363,28 +363,23 @@ class HttpScanner(object):
         self.ua = UserAgent() if self.args.random_agent else None
 
         # Reading files
-        self.output.write_log("Reading files.", logging.INFO)
-        hosts = self.__file_to_list(args.hosts)
-        urls = self.__file_to_list(args.urls)
+        self.output.write_log("Reading files and deduplicating.", logging.INFO)
+        hosts = self._file_to_list(args.hosts, True)
+        urls = self._file_to_list(args.urls, True)
 
         # Generating full url list
-        self.output.write_log("Generating deduplicated url list. Wait a moment...", logging.INFO)
+        self.output.write_log("Generating full URL list. Wait a moment...", logging.INFO)
         self.urls = []
         for host in hosts:
             host = 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
                 'http') else host
 
             for url in urls:
-                full_url = urljoin(host, url)
-                if full_url not in self.urls:
-                    self.urls.append(full_url)
+                self.urls.append(urljoin(host, url))
         urls_count = len(self.urls)
         self.output.write_log('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), urls_count), logging.INFO)
 
-        # Output
-        # a = args
-        # a.urls_count = urls_count
-        # self.output = Output(a)
+        # Output urls count
         self.output.args.urls_count = urls_count
 
         # Pool
@@ -394,7 +389,12 @@ class HttpScanner(object):
         else:
             self.pool = Pool(self.args.threads)
 
-    def __file_to_list(self, filename):
+    def _deduplicate(self, seq):
+        seen = set()
+        seen_add = seen.add
+        return [x for x in seq if not (x in seen or seen_add(x))]
+
+    def _file_to_list(self, filename, dedup=False):
         """
         Get list from file
         :param filename: file to read
@@ -403,7 +403,9 @@ class HttpScanner(object):
         if not path.exists(filename) or not path.isfile(filename):
             self.output.write_log('File %s not found' % filename, logging.ERROR)
             exit(-1)
-        return filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
+        lines = filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
+
+        return self._deduplicate(lines) if dedup else lines
 
     def scan(self, url):
         """
