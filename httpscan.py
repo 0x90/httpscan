@@ -63,6 +63,7 @@ class Output(object):
     def __init__(self, args):
         self.args = args
         self.lock = RLock()
+        self.log_lock = RLock()
 
         # Colorama init
         init()
@@ -269,7 +270,7 @@ class Output(object):
         if self.logger is None:
             return
 
-        self.lock.acquire()
+        self.log_lock.acquire()
         if loglevel == logging.INFO:
             self.logger.info(msg)
         elif loglevel == logging.DEBUG:
@@ -279,7 +280,7 @@ class Output(object):
         elif loglevel == logging.WARNING:
             self.logger.warning(msg)
 
-        self.lock.release()
+        self.log_lock.release()
 
 
 class HttpScanner(object):
@@ -312,13 +313,15 @@ class HttpScanner(object):
                 real_ip = get(url).text.strip()
             except Exception as exception:
                 print("Couldn't get real IP address. Check yout internet connection.")
-                exit(01)
+                print(str(exception))
+                exit(-1)
 
-            # Ger TOR IP address
+            # Get TOR IP address
             try:
                 tor_ip = self.session.get(url).text.strip()
             except Exception as exception:
                 print("TOR socks proxy doesn't seem to be working.")
+                print(str(exception))
                 exit(-1)
 
             # Show IP addresses
@@ -412,8 +415,7 @@ class HttpScanner(object):
             headers = {'User-agent': self.ua.random}
 
         # Query URL and handle exceptions
-        response = None
-        exception = None
+        response, exception = None, None
         try:
             # TODO: add support for user:password in URL
             response = self.session.get(url, headers=headers, allow_redirects=self.args.allow_redirects)
@@ -466,6 +468,7 @@ def http_scan(args):
     start = strnow()
     HttpScanner(args).start()
     print(Fore.RESET + 'Statisitcs:\nScan started %s\nScan finished %s' % (start, strnow()))
+
 
 def main():
     parser = ArgumentParser('httpscan', description='Multithreaded HTTP scanner',
