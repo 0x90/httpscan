@@ -22,6 +22,7 @@ if python_version() == '2.7.9':
 
 # Gevent monkey patching
 from gevent import monkey
+
 monkey.patch_all()
 
 # Basic dependencies
@@ -52,6 +53,11 @@ from gevent.queue import JoinableQueue
 from gevent.lock import RLock
 from gevent import spawn
 import gevent
+
+# Scapy
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
+from scapy.all import *
+from scapy.layers.inet import ICMP, TCP, IP
 
 
 def strnow(format='%d.%m.%Y %H:%M:%S'):
@@ -94,7 +100,7 @@ class HttpScannerOutput(object):
         self._init_dump()
         self._init_db()
 
-        #Stats
+        # Stats
         self.urls_scanned = 0
 
     def _init_logger(self):
@@ -490,6 +496,26 @@ class HttpScanner(object):
 
         return head_available
 
+    def _icmp_ping(self, host, timeout=10):
+        # TODO: check and debug
+        response = sr1(IP(dst=host) / ICMP(), timeout=timeout)
+        return response is not None
+
+    def _syn_scan(self, host, ports=[80]):
+        # TODO: check and debug
+        a, u = sr(IP(dst=host) / TCP(sport=RandShort(), dport=ports, flags="S"), timeout=0.1)
+        # ports =
+        a.summary(
+            # apply the filter function to each packet (i.e. decide whether
+            # it will be displayed or not)
+            lfilter=lambda (s, r): r.sprintf("%TCP.flags%") == "SA",
+            # function to apply to each packet
+            prn=lambda (s, r): r.sprintf("%TCP.sport% is open"
+                                         " (%TCP.flags%)")
+        )
+
+        return []
+
     def _scan_host(self, worker_id, host):
         # TODO: add ICMP ping check
         # TODO: add SYN check and scan
@@ -499,9 +525,15 @@ class HttpScanner(object):
             if head_available:
                 self.output.write_log('HEAD is supported for %s' % host)
 
+        errors_count = 0
         for url in self.urls:
             full_url = urljoin(self._host_to_url(host), url)
-            self._scan_url(worker_id, full_url, head_available)
+            r = self._scan_url(worker_id, full_url, head_available)
+            if r is None:
+                errors_count += 1
+
+            if self.args.skip is not None and errors_count == self.args.skip:
+                return
 
     def _scan_url(self, worker_id, url, use_head=False):
         """
@@ -532,16 +564,22 @@ class HttpScanner(object):
                 response = self.session.get(url, headers=headers, allow_redirects=self.args.allow_redirects)
         except ConnectionError as exception:
             self.output.write_log('Connection error while quering %s' % url, logging.ERROR)
+            return None
         except HTTPError as exception:
             self.output.write_log('HTTP error while quering %s' % url, logging.ERROR)
+            return None
         except Timeout as exception:
             self.output.write_log('Timeout while quering %s' % url, logging.ERROR)
+            return None
         except TooManyRedirects as exception:
             self.output.write_log('Too many redirects while quering %s' % url, logging.ERROR)
+            return None
         except Exception as exception:
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
+            return None
 
         self.output.write(worker_id, url, response, exception)
+        return response
 
     def signal_handler(self):
         """
@@ -608,8 +646,8 @@ def main():
     group.add_argument('-R', '--referer', help='referer URL')
     group.add_argument('-s', '--skip', type=int, help='skip host if errors count reached value')
     group.add_argument('-r', '--allow-redirects', action='store_true', help='follow redirects')
-    group.add_argument('--tor', action='store_true', help='Use TOR as proxy')
     group.add_argument('-H', '--head', action='store_true', help='try to use HEAD request if possible')
+    group.add_argument('--tor', action='store_true', help='Use TOR as proxy')
     # group.add_argument('-i', '--ping', action='store_true', help='use ICMP ping request to detect if host available')
     # group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
     # group.add_argument('-P', '--port',  help='ports to scan')
