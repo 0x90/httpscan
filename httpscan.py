@@ -5,7 +5,7 @@
 # Feel free to contribute.
 #
 # Usage example:
-#   ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db
+# ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db
 #
 
 __author__ = '@090h'
@@ -47,9 +47,10 @@ from requesocks import session
 from cookies import Cookies
 from fake_useragent import UserAgent
 from colorama import init, Fore
+from gevent.queue import JoinableQueue
 from gevent.lock import RLock
-from gevent.pool import Pool
 from gevent import spawn
+
 import gevent
 
 
@@ -73,8 +74,10 @@ def deduplicate(seq):
     return [x for x in seq if not (x in seen or seen_add(x))]
 
 
-class Output(object):
+
+class HttpScannerOutput(object):
     def __init__(self, args):
+        # TODO: make separate queues for fast logging
         self.args = args
         self.lock = RLock()
         self.log_lock = RLock()
@@ -92,7 +95,7 @@ class Output(object):
         self._init_dump()
         self._init_db()
 
-        # Initialise percentage
+        #Stats
         self.urls_scanned = 0
 
     def _init_logger(self):
@@ -207,16 +210,16 @@ class Output(object):
                 'headers': str(response.headers)
                 }
 
-    def write(self, url, response, exception):
+    def write(self, worker_id, url, response, exception):
         """
         Write url and response to output asynchronously
         :param url:
         :param response:
         :return: None
         """
-        spawn(self.write_func, url, response, exception)
+        spawn(self.write_func, worker_id, url, response, exception)
 
-    def write_func(self, url, response, exception):
+    def write_func(self, worker_id, url, response, exception):
         """
         Write url and response to output synchronously
         :param url: url scanned
@@ -233,7 +236,7 @@ class Output(object):
         # TODO: add detailed stats
 
         # Generate and print colored output
-        out = '[%s] [%s]\t%s -> %i' % (strnow(), percentage, parsed['url'], parsed['status'])
+        out = '[%s] [worker:%s] [%s]\t%s -> %i' % (strnow(), worker_id, percentage, parsed['url'], parsed['status'])
         if exception is not None:
             out += '(%s)' % str(exception)
         if parsed['status'] == 200:
@@ -245,10 +248,11 @@ class Output(object):
 
         # Write to log file
         if self.logger is not None:
+            out = '[worker:%s] %s %s %i' % (worker_id, url, parsed['status'], parsed['length'])
             if exception is None:
-                self.logger.info('%s %s %i' % (url, parsed['status'], parsed['length']))
+                self.logger.info(out)
             else:
-                self.logger.error('%s %s %i %s' % (url, parsed['status'], parsed['length'], str(exception)))
+                self.logger.error("%s %s" % (out, str(exception)))
 
         # Check for exception
         if exception is not None:
@@ -346,17 +350,44 @@ class HttpScanner(object):
         :return:
         """
         self.args = args
+        self.output = HttpScannerOutput(args)
+        self._init_scan_options()
 
-        # Output
-        self.output = Output(args)
+        # Reading files
+        self.output.write_log("Reading files and deduplicating.", logging.INFO)
+        self.hosts = self._file_to_list(args.hosts, True)
+        self.urls = self._file_to_list(args.urls, True)
 
+        # Calculations
+        urls_count = len(self.urls)
+        hosts_count = len(self.hosts)
+        full_urls_count = len(self.urls) * len(self.hosts)
+        self.output.write_log(
+            '%i hosts %i urls loaded, %i urls to scan' % (hosts_count, urls_count, full_urls_count),
+            logging.INFO)
+
+        # Check threds count vs hosts count
+        if self.args.threads > hosts_count:
+            self.output.write_log('Too many threads! Fixing threads count to %i' % hosts_count, logging.WARNING)
+            self.threads_count = hosts_count
+        else:
+            self.threads_count = self.args.threads
+
+        # Output urls count
+        self.output.args.urls_count = full_urls_count
+
+        # Queue and workers
+        self.hosts_queue = JoinableQueue()
+        self.workers = []
+
+    def _init_scan_options(self):
         # Session
         self.session = session()
         self.session.timeout = self.args.timeout
         self.session.verify = False
 
         # TOR
-        if args.tor:
+        if self.args.tor:
             self.output.write_log("TOR usage detected. Making some checks.", logging.INFO)
             self.session.proxies = {
                 'http': 'socks5://127.0.0.1:9050',
@@ -415,33 +446,9 @@ class HttpScanner(object):
         # User-Agent
         self.ua = UserAgent() if self.args.random_agent else None
 
-        # Reading files
-        self.output.write_log("Reading files and deduplicating.", logging.INFO)
-        hosts = self._file_to_list(args.hosts, True)
-        urls = self._file_to_list(args.urls, True)
-
-        # Generating full url list
-        self.output.write_log("Generating full URL list. Wait a moment...", logging.INFO)
-        self.urls = []
-        for host in hosts:
-            host = 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
-                'http') else host
-
-            for url in urls:
-                self.urls.append(urljoin(host, url))
-        urls_count = len(self.urls)
-        self.output.write_log('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), urls_count),
-                              logging.INFO)
-
-        # Output urls count
-        self.output.args.urls_count = urls_count
-
-        # Pool
-        if self.args.threads > urls_count:
-            self.output.write_log('Too many threads! Fixing threads count to %i' % urls_count, logging.WARNING)
-            self.pool = Pool(urls_count)
-        else:
-            self.pool = Pool(self.args.threads)
+    def _host_to_url(self, host):
+        return 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
+            'http') else host
 
     def _file_to_list(self, filename, dedup=False):
         """
@@ -457,7 +464,25 @@ class HttpScanner(object):
         lines = filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
         return deduplicate(lines) if dedup else lines
 
-    def scan(self, url):
+    def worker(self, num):
+        self.output.write_log('Worker %i started.' % num)
+        while not self.hosts_queue.empty():
+            host = self.hosts_queue.get()
+            try:
+                self._scan_host(num, host)
+            finally:
+                self.output.write_log('Worker %i finished.' % num)
+                self.hosts_queue.task_done()
+
+    def _scan_host(self, worker_id, host):
+        # TODO: check if HEAD requests are available
+        # TODO: add ICMP ping check
+        # TODO: add SYN check and scan
+        for url in self.urls:
+            full_url = urljoin(self._host_to_url(host), url)
+            self._scan_url(worker_id, full_url)
+
+    def _scan_url(self, worker_id, url):
         """
         Scan specified URL with HTTP GET request
         :param url: url to scan
@@ -492,7 +517,7 @@ class HttpScanner(object):
         except Exception as exception:
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
 
-        self.output.write(url, response, exception)
+        self.output.write(worker_id, url, response, exception)
 
     def signal_handler(self):
         """
@@ -502,7 +527,7 @@ class HttpScanner(object):
         self.output.write_log('Signal caught. Stopping...', logging.WARNING)
         print('Signal caught. Stopping...')
         self.stop()
-        exit(signal.SIGINT)
+        # exit(signal.SIGINT)
 
     def start(self):
         """
@@ -514,16 +539,20 @@ class HttpScanner(object):
         gevent.signal(signal.SIGINT, self.signal_handler)
         gevent.signal(signal.SIGQUIT, self.signal_handler)
 
-        # Start scanning
-        self.pool.map(self.scan, self.urls)
+        # Start workers
+        self.workers = [spawn(self.worker, i) for i in range(self.threads_count)]
+
+        # Fill and join queue
+        [self.hosts_queue.put(host) for host in self.hosts]
+        self.hosts_queue.join()
 
     def stop(self):
         """
         Stop scan
         :return:
         """
-        self.pool.kill(block=True, timeout=4)
         # TODO: add saving status via pickle
+        gevent.killall(self.workers)
 
 
 def http_scan(args):
@@ -553,7 +582,12 @@ def main():
     group.add_argument('-u', '--user-agent', help='User-Agent to use')
     group.add_argument('-U', '--random-agent', action='store_true', help='use random User-Agent')
     group.add_argument('-d', '--dump', help='save found files to directory')
-    group.add_argument('-R', '--referer', help='referer url')
+    group.add_argument('-R', '--referer', help='referer URL')
+    group.add_argument('-s', '--skip', type=int, help='skip host if errors count reached value')
+    # group.add_argument('-H', '--head', action='store_true', help='try to use HEAD request if possible')
+    # group.add_argument('-i', '--ping', action='store_true', help='use ICMP ping request to detect if host available')
+    # group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
+    # group.add_argument('-P', '--port',  help='ports to scan')
 
     # filter options
     group = parser.add_argument_group('Filter options')
