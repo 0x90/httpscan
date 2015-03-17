@@ -403,8 +403,9 @@ class HttpScanner(object):
         if not path.exists(filename) or not path.isfile(filename):
             self.output.write_log('File %s not found' % filename, logging.ERROR)
             exit(-1)
-        lines = filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
 
+        # Preparing lines list
+        lines = filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
         return self._deduplicate(lines) if dedup else lines
 
     def scan(self, url):
