@@ -194,7 +194,8 @@ class Output(object):
         # Parse excetion
         exc_value = None
         if exception is not None:
-            exc_type, exc_value, exc_traceback = exc_info()
+            # exc_type, exc_value, exc_traceback = exc_info()
+            exc_value = str(exception)
 
         # Print colored output
         if exception is None:
@@ -411,21 +412,16 @@ class HttpScanner(object):
         try:
             # TODO: add support for user:password in URL
             response = self.session.get(url, headers=headers, allow_redirects=self.args.allow_redirects)
-        except ConnectionError:
+        except ConnectionError as exception:
             self.output.write_log('Connection error while quering %s' % url, logging.ERROR)
-            exception = ConnectionError
-        except HTTPError:
+        except HTTPError as exception:
             self.output.write_log('HTTP error while quering %s' % url, logging.ERROR)
-            exception = HTTPError
-        except Timeout:
+        except Timeout as exception:
             self.output.write_log('Timeout while quering %s' % url, logging.ERROR)
-            exception = Timeout
-        except TooManyRedirects:
+        except TooManyRedirects as exception:
             self.output.write_log('Too many redirects while quering %s' % url, logging.ERROR)
-            exception = TooManyRedirects
-        except Exception:
+        except Exception as exception:
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
-            exception = Exception
 
         self.output.write(url, response, exception)
 
