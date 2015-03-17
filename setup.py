@@ -8,7 +8,7 @@ from setuptools import setup
 
 setup(
     name='httpscan',
-    version='0.4',
+    version='0.5',
     platforms='any',
     author='@090h',
     author_email='root@0x90.ru',
@@ -19,11 +19,11 @@ setup(
     packages=['httpscan'],
     scripts=['httpscan.py'],
     install_requires=['SQLAlchemy',
+                      'SQLAlchemy-Utils',
                       'cookies',
                       'colorama',
                       'gevent'
                       'fake-useragent',
                       'requests',
-                      'SQLAlchemy-Utils'
                       ]
 )

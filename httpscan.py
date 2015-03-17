@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 #
-# Simple Multithreaded HTTP scanner.
+# Multithreaded asynchronous HTTP scanner.
 # Feel free to contribute.
 #
 # Usage example:
@@ -10,7 +10,7 @@
 
 __author__ = '@090h'
 __license__ = 'GPL'
-__version__ = '0.4'
+__version__ = '0.5'
 
 # Check Python version
 from platform import python_version
@@ -42,6 +42,7 @@ import io
 from sqlalchemy_utils.functions import create_database, database_exists
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
+from requests.adapters import HTTPAdapter
 from requests import packages, get
 from requesocks import session
 from cookies import Cookies
@@ -50,7 +51,6 @@ from colorama import init, Fore
 from gevent.queue import JoinableQueue
 from gevent.lock import RLock
 from gevent import spawn
-
 import gevent
 
 
@@ -72,7 +72,6 @@ def deduplicate(seq):
     seen = set()
     seen_add = seen.add
     return [x for x in seq if not (x in seen or seen_add(x))]
-
 
 
 class HttpScannerOutput(object):
@@ -386,6 +385,10 @@ class HttpScanner(object):
         self.session.timeout = self.args.timeout
         self.session.verify = False
 
+        # Max retries
+        self.session.mount("http://", HTTPAdapter(max_retries=self.args.max_retries))
+        self.session.mount("https://", HTTPAdapter(max_retries=self.args.max_retries))
+
         # TOR
         if self.args.tor:
             self.output.write_log("TOR usage detected. Making some checks.", logging.INFO)
@@ -573,9 +576,8 @@ def main():
     group = parser.add_argument_group('Scan options')
     group.add_argument('-t', '--timeout', type=int, default=10, help='scan timeout')
     group.add_argument('-T', '--threads', type=int, default=5, help='threads count')
-    group.add_argument('-r', '--allow-redirects', action='store_true', help='follow redirects')
+    group.add_argument('-m', '--max-retries', type=int, default=3, help='Max retries for the request')
     group.add_argument('-p', '--proxy', help='HTTP/SOCKS proxy to use (http://user:pass@127.0.0.1:8080)')
-    group.add_argument('--tor', action='store_true', help='Use TOR as proxy')
     group.add_argument('-a', '--auth', help='HTTP Auth user:password')
     group.add_argument('-c', '--cookies', help='cookies to send during scan')
     group.add_argument('-C', '--load-cookies', help='load cookies from specified file')
@@ -584,6 +586,8 @@ def main():
     group.add_argument('-d', '--dump', help='save found files to directory')
     group.add_argument('-R', '--referer', help='referer URL')
     group.add_argument('-s', '--skip', type=int, help='skip host if errors count reached value')
+    group.add_argument('-r', '--allow-redirects', action='store_true', help='follow redirects')
+    group.add_argument('--tor', action='store_true', help='Use TOR as proxy')
     # group.add_argument('-H', '--head', action='store_true', help='try to use HEAD request if possible')
     # group.add_argument('-i', '--ping', action='store_true', help='use ICMP ping request to detect if host available')
     # group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
