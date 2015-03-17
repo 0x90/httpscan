@@ -5,9 +5,10 @@
 # Feel free to contribute.
 #
 # Usage example:
+#   ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db
 #
-# ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db
-__author__ = '090h'
+
+__author__ = '@090h'
 __license__ = 'GPL'
 __version__ = '0.4'
 
@@ -21,7 +22,6 @@ if python_version() == '2.7.9':
 
 # Gevent monkey patching
 from gevent import monkey
-
 monkey.patch_all()
 
 # Basic dependencies
@@ -53,15 +53,21 @@ from gevent import spawn
 import gevent
 
 
-def strnow():
+def strnow(format='%d.%m.%Y %H:%M:%S'):
     """
-    Current datetime
+    Current datetime to string
+    :param format: format string for output
     :return: string for current datetime
     """
-    return datetime.now().strftime('%d.%m.%Y %H:%M:%S')
+    return datetime.now().strftime(format)
 
 
 def deduplicate(seq):
+    """
+    Deduplicate list
+    :param seq: list to deduplicate
+    :return: deduplicated list
+    """
     seen = set()
     seen_add = seen.add
     return [x for x in seq if not (x in seen or seen_add(x))]
@@ -92,7 +98,7 @@ class Output(object):
     def _init_logger(self):
         """
         Init logger
-        :return: logger
+        :return: None
         """
         if self.args.log_file is not None:
             self.logger = logging.getLogger('httpscan_logger')
@@ -106,7 +112,7 @@ class Output(object):
 
     def _init_requests_output(self):
         """
-        Init requests output
+        Init requests library output
         :return: None
         """
         if self.args.debug:
@@ -137,20 +143,24 @@ class Output(object):
     def _init_json(self):
         """
         Initialise JSON output
-        :return:
+        :return: None
         """
         self.json = None if self.args.output_json is None else io.open(self.args.output_json, 'w', encoding='utf-8')
 
     def _init_dump(self):
         """
         Initialise dump folder
-        :return:
+        :return: None
         """
         self.dump = path.abspath(self.args.dump) if self.args.dump is not None else None
         if self.dump is not None and not path.exists(self.dump):
             makedirs(self.dump)
 
     def _init_db(self):
+        """
+        Initialise database output. Create database and table if missing.
+        :return: None
+        """
         if self.args.output_database is None:
             self.engine = None
             return
@@ -176,7 +186,7 @@ class Output(object):
         Parse url and response to dictionary
         :param url:
         :param response:
-        :return:
+        :return: None
         """
         if response is None:
             return {'url': url,
@@ -202,16 +212,16 @@ class Output(object):
         Write url and response to output asynchronously
         :param url:
         :param response:
-        :return:
+        :return: None
         """
         spawn(self.write_func, url, response, exception)
 
     def write_func(self, url, response, exception):
         """
         Write url and response to output synchronously
-        :param url:
-        :param response:
-        :return:
+        :param url: url scanned
+        :param response: response to parse
+        :return: None
         """
         # Acquire lock
         self.lock.acquire()
@@ -222,7 +232,7 @@ class Output(object):
         percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
         # TODO: add detailed stats
 
-        # Print colored output
+        # Generate and print colored output
         out = '[%s] [%s]\t%s -> %i' % (strnow(), percentage, parsed['url'], parsed['status'])
         if exception is not None:
             out += '(%s)' % str(exception)
@@ -238,7 +248,7 @@ class Output(object):
             if exception is None:
                 self.logger.info('%s %s %i' % (url, parsed['status'], parsed['length']))
             else:
-                self.logger.info('%s %s %i %s' % (url, parsed['status'], parsed['length'], str(exception)))
+                self.logger.error('%s %s %i %s' % (url, parsed['status'], parsed['length'], str(exception)))
 
         # Check for exception
         if exception is not None:
@@ -272,9 +282,9 @@ class Output(object):
     def _write_dump(self, url, response):
         """
         Write dump
-        :param url:
-        :param response:
-        :return:
+        :param url: URL scanned
+        :param response: response
+        :return: None
         """
         if response is None:
             return
@@ -307,10 +317,10 @@ class Output(object):
 
     def write_log(self, msg, loglevel=logging.INFO):
         """
-        Write log
+        Write message to log file
         :param msg:
         :param loglevel:
-        :return:
+        :return: None
         """
         if self.logger is None:
             return
