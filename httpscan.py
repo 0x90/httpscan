@@ -7,7 +7,7 @@
 # Feel free to contribute.
 #
 # Usage example:
-# ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -oC test.csv -r -R -D -L scan.log
+# ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -oC test.csv -r -U -L scan.log
 #
 __author__ = '090h'
 __license__ = 'GPL'
@@ -230,8 +230,17 @@ class Output(object):
             makedirs(folder)
         filename = path.join(folder, f)
 
-        with open(filename, 'wb') as f:
-            f.write(response.content)
+        # Get all content
+        try:
+            content = response.content
+        except:
+            # TODO: add proper exception handling
+            return
+        # Save contents to file
+        f = open(filename, 'wb')
+        f.write(content)
+        f.close()
+
 
     def write_log(self, msg, loglevel=logging.INFO):
         """
@@ -243,6 +252,7 @@ class Output(object):
         if self.logger is None:
             return
 
+        self.lock.acquire()
         if loglevel == logging.INFO:
             self.logger.info(msg)
         elif loglevel == logging.DEBUG:
@@ -252,6 +262,7 @@ class Output(object):
         elif loglevel == logging.WARNING:
             self.logger.warning(msg)
 
+        self.lock.release()
 
 
 class HttpScanner(object):
@@ -371,28 +382,28 @@ class HttpScanner(object):
             headers = {'User-agent': self.ua.random}
 
         # Query URL and handle exceptions
+        response = None
         try:
             # TODO: add support for user:password in URL
             response = self.session.get(url, headers=headers, allow_redirects=self.args.allow_redirects)
         except ConnectionError:
             self.output.write_log('Connection error while quering %s' % url, logging.ERROR)
-            return None
+            # return None
         except HTTPError:
             self.output.write_log('HTTP error while quering %s' % url, logging.ERROR)
-            return None
+            # return None
         except Timeout:
             self.output.write_log('Timeout while quering %s' % url, logging.ERROR)
-            return None
+            # return None
         except TooManyRedirects:
             self.output.write_log('Too many redirects while quering %s' % url, logging.ERROR)
-            return None
+            # return None
         except Exception:
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
-            return None
-
+            # return None
 
         self.output.write(url, response)
-        return response
+        # return response
 
     def signal_handler(self):
         """
