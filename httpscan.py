@@ -192,7 +192,7 @@ class Output(object):
         # TODO: add detailed stats
 
         # Parse excetion
-        exc_type = None
+        exc_value = None
         if exception is not None:
             exc_type, exc_value, exc_traceback = exc_info()
 
@@ -200,7 +200,7 @@ class Output(object):
         if exception is None:
             out = '[%s] [%s]\t%s -> %i' % (self._strnow(), percentage, parsed['url'], parsed['status'])
         else:
-            out = '[%s] [%s]\t%s -> %i (%s)' % (self._strnow(), percentage, parsed['url'], parsed['status'], exc_type)
+            out = '[%s] [%s]\t%s -> %i (%s)' % (self._strnow(), percentage, parsed['url'], parsed['status'], exc_value)
         if parsed['status'] == 200:
             print(Fore.GREEN + out + Fore.RESET)
         elif 400 <= parsed['status'] < 500 or parsed['status'] == -1:
@@ -213,7 +213,7 @@ class Output(object):
             if exception is None:
                 self.logger.info('%s %s %i' % (url, parsed['status'], parsed['length']))
             else:
-                self.logger.info('%s %s %i %s' % (url, parsed['status'], parsed['length'], exc_type))
+                self.logger.info('%s %s %i %s' % (url, parsed['status'], parsed['length'], exc_value))
 
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
