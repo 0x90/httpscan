@@ -506,7 +506,7 @@ class HttpScanner(object):
                 head_available = False if self.session.head(host).status_code == 405 else True
             except:
                 #TODO: fix
-                pass
+                return False
 
         return head_available
 
