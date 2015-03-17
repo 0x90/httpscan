@@ -6,11 +6,10 @@
 #
 # Usage example:
 #
-#   ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -oC test.csv -r -U -L scan.log --tor
-#
+# ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db
 __author__ = '090h'
 __license__ = 'GPL'
-__version__ = '0.3'
+__version__ = '0.4'
 
 # Check Python version
 from platform import python_version
@@ -22,6 +21,7 @@ if python_version() == '2.7.9':
 
 # Gevent monkey patching
 from gevent import monkey
+
 monkey.patch_all()
 
 # Basic dependencies
@@ -39,8 +39,11 @@ import signal
 import io
 
 # External dependencies
+from sqlalchemy_utils.functions import create_database, database_exists
+from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
 from requests import packages, get
+from requesocks import session
 from cookies import Cookies
 from fake_useragent import UserAgent
 from colorama import init, Fore
@@ -48,7 +51,6 @@ from gevent.lock import RLock
 from gevent.pool import Pool
 from gevent import spawn
 import gevent
-import requesocks
 
 
 def strnow():
@@ -57,6 +59,12 @@ def strnow():
     :return: string for current datetime
     """
     return datetime.now().strftime('%d.%m.%Y %H:%M:%S')
+
+
+def deduplicate(seq):
+    seen = set()
+    seen_add = seen.add
+    return [x for x in seq if not (x in seen or seen_add(x))]
 
 
 class Output(object):
@@ -76,6 +84,7 @@ class Output(object):
         self._init_csv()
         self._init_json()
         self._init_dump()
+        self._init_db()
 
         # Initialise percentage
         self.urls_scanned = 0
@@ -121,6 +130,7 @@ class Output(object):
         if self.args.output_csv is None:
             self.csv = None
         else:
+            # TODO: check if file exists
             self.csv = writer(open(self.args.output_csv, 'wb'), delimiter=';', quoting=QUOTE_ALL)
             self.csv.writerow(['url', 'status', 'length', 'headers'])
 
@@ -139,6 +149,27 @@ class Output(object):
         self.dump = path.abspath(self.args.dump) if self.args.dump is not None else None
         if self.dump is not None and not path.exists(self.dump):
             makedirs(self.dump)
+
+    def _init_db(self):
+        if self.args.output_database is None:
+            self.engine = None
+            return
+
+        # Check and create database if needed
+        if not database_exists(self.args.output_database):
+            create_database(self.args.output_database, encoding='utf8')
+
+        # Create table
+        self.engine = create_engine(self.args.output_database)
+        self.metadata = MetaData()
+        self.scan_table = Table('httpscan', self.metadata,
+                                Column('id', Integer, primary_key=True),
+                                Column('url', String),
+                                Column('status', Integer),
+                                Column('length', Integer),
+                                Column('headers', String)
+                                )
+        self.metadata.create_all(self.engine)
 
     def _parse_response(self, url, response):
         """
@@ -209,6 +240,11 @@ class Output(object):
             else:
                 self.logger.info('%s %s %i %s' % (url, parsed['status'], parsed['length'], str(exception)))
 
+        # Check for exception
+        if exception is not None:
+            self.lock.release()
+            return
+
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
                 (self.args.allow is not None and parsed['status'] in self.args.allow) or \
@@ -223,13 +259,17 @@ class Output(object):
                 self.json.write(unicode(dumps(parsed, ensure_ascii=False)))
 
             # Save contents to file
-            if self.dump is not None and exception is None:
-                self.write_dump(url, response)
+            if self.dump is not None:
+                self._write_dump(url, response)
+
+            # Write to database
+            if self.engine is not None:
+                self._write_db(parsed)
 
         # Realse lock
         self.lock.release()
 
-    def write_dump(self, url, response):
+    def _write_dump(self, url, response):
         """
         Write dump
         :param url:
@@ -259,6 +299,11 @@ class Output(object):
         f = open(filename, 'wb')
         f.write(content)
         f.close()
+
+    def _write_db(self, parsed):
+        # TODO: check if url exists in table
+        self.scan_table.insert()
+        self.engine.execute(self.scan_table.insert().execution_options(autocommit=True), parsed)
 
     def write_log(self, msg, loglevel=logging.INFO):
         """
@@ -293,12 +338,10 @@ class HttpScanner(object):
         self.args = args
 
         # Output
-        # a = args
-        # a.urls_count = urls_count
         self.output = Output(args)
 
         # Session
-        self.session = requesocks.session()
+        self.session = session()
         self.session.timeout = self.args.timeout
         self.session.verify = False
 
@@ -377,7 +420,8 @@ class HttpScanner(object):
             for url in urls:
                 self.urls.append(urljoin(host, url))
         urls_count = len(self.urls)
-        self.output.write_log('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), urls_count), logging.INFO)
+        self.output.write_log('%i hosts %i urls loaded, %i urls to scan' % (len(hosts), len(urls), urls_count),
+                              logging.INFO)
 
         # Output urls count
         self.output.args.urls_count = urls_count
@@ -388,11 +432,6 @@ class HttpScanner(object):
             self.pool = Pool(urls_count)
         else:
             self.pool = Pool(self.args.threads)
-
-    def _deduplicate(self, seq):
-        seen = set()
-        seen_add = seen.add
-        return [x for x in seq if not (x in seen or seen_add(x))]
 
     def _file_to_list(self, filename, dedup=False):
         """
@@ -406,7 +445,7 @@ class HttpScanner(object):
 
         # Preparing lines list
         lines = filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
-        return self._deduplicate(lines) if dedup else lines
+        return deduplicate(lines) if dedup else lines
 
     def scan(self, url):
         """
@@ -514,7 +553,8 @@ def main():
     group = parser.add_argument_group('Output options')
     group.add_argument('-oC', '--output-csv', help='output results to CSV file')
     group.add_argument('-oJ', '--output-json', help='output results to JSON file')
-    # group.add_argument('-oD', '--output-database', help='output results to database via SQLAlchemy')
+    group.add_argument('-oD', '--output-database',
+                       help='output results to database via SQLAlchemy (postgres://postgres@localhost/name)')
     # group.add_argument('-oX', '--output-xml', help='output results to XML file')
     # group.add_argument('-P', '--progress-bar', action='store_true', help='show scanning progress')
 
@@ -526,6 +566,7 @@ def main():
     # Parse args and start scanning
     args = parser.parse_args()
     http_scan(args)
+
 
 if __name__ == '__main__':
     main()
