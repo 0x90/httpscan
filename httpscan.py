@@ -455,12 +455,16 @@ class HttpScanner(object):
         """
         self.output.write_log('Scanning %s' % url, logging.DEBUG)
 
-        # Fill headers
+        # Fill UserAgent in headers
         headers = {}
         if self.args.user_agent is not None:
-            headers = {'User-agent': self.args.user_agent}
-        if self.args.random_agent:
-            headers = {'User-agent': self.ua.random}
+            headers['User-agent'] = self.args.user_agent
+        elif self.args.random_agent:
+            headers['User-agent'] = self.ua.random
+
+        # Fill Referer in headers
+        if self.args.referer is not None:
+            headers['Referer'] = self.args.referer
 
         # Query URL and handle exceptions
         response, exception = None, None
@@ -539,8 +543,7 @@ def main():
     group.add_argument('-u', '--user-agent', help='User-Agent to use')
     group.add_argument('-U', '--random-agent', action='store_true', help='use random User-Agent')
     group.add_argument('-d', '--dump', help='save found files to directory')
-    # TODO: add Referer argument
-    # group.add_argument('-R', '--referer', help='referer url')
+    group.add_argument('-R', '--referer', help='referer url')
 
     # filter options
     group = parser.add_argument_group('Filter options')
@@ -555,8 +558,6 @@ def main():
     group.add_argument('-oJ', '--output-json', help='output results to JSON file')
     group.add_argument('-oD', '--output-database',
                        help='output results to database via SQLAlchemy (postgres://postgres@localhost/name)')
-    # group.add_argument('-oX', '--output-xml', help='output results to XML file')
-    # group.add_argument('-P', '--progress-bar', action='store_true', help='show scanning progress')
 
     # Debug and logging options
     group = parser.add_argument_group('Debug output and logging options')
