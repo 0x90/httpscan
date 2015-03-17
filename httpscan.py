@@ -43,7 +43,7 @@ import io
 from sqlalchemy_utils.functions import create_database, database_exists
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
-from requests.adapters import HTTPAdapter
+from requests.adapters import HTTPAdapter, DEFAULT_RETRIES
 from requests import packages, get, options, head
 from requesocks import session
 from cookies import Cookies
@@ -396,9 +396,11 @@ class HttpScanner(object):
         self.session.timeout = self.args.timeout
         self.session.verify = False
 
+        # TODO: debug and check
+        # self.session.mount("http://", HTTPAdapter(max_retries=self.args.max_retries))
+        # self.session.mount("https://", HTTPAdapter(max_retries=self.args.max_retries))
         # Max retries
-        self.session.mount("http://", HTTPAdapter(max_retries=self.args.max_retries))
-        self.session.mount("https://", HTTPAdapter(max_retries=self.args.max_retries))
+        DEFAULT_RETRIES = self.args.max_retries
 
         # TOR
         if self.args.tor:
