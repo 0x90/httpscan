@@ -166,16 +166,16 @@ class Output(object):
         """
         return datetime.now().strftime('%d.%m.%Y %H:%M:%S')
 
-    def write(self, url, response):
+    def write(self, url, response, exception):
         """
         Write url and response to output asynchronously
         :param url:
         :param response:
         :return:
         """
-        spawn(self.write_func, url, response)
+        spawn(self.write_func, url, response, exception)
 
-    def write_func(self, url, response):
+    def write_func(self, url, response, exception):
         """
         Write url and response to output synchronously
         :param url:
@@ -189,20 +189,26 @@ class Output(object):
         # Calculate progreess
         self.urls_scanned += 1
         percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
-        # TODO: add stats
+        # TODO: add detailed stats
 
         # Print colored output
-        out = '[%s] [%s]\t%s -> %i' % (self._strnow(), percentage, parsed['url'], parsed['status'])
-        if parsed['status'] == 200:
-            print(Fore.GREEN + out)
-        elif 400 <= parsed['status'] < 500:
-            print(Fore.RED + out)
+        if exception is None:
+            out = '[%s] [%s]\t%s -> %i' % (self._strnow(), percentage, parsed['url'], parsed['status'])
         else:
-            print(Fore.YELLOW + out)
+            out = '[%s] [%s]\t%s -> %i (%s)' % (self._strnow(), percentage, parsed['url'], parsed['status'], exception)
+        if parsed['status'] == 200:
+            print(Fore.GREEN + out + Fore.RESET)
+        elif 400 <= parsed['status'] < 500 or parsed['status'] == -1:
+            print(Fore.RED + out + Fore.RESET)
+        else:
+            print(Fore.YELLOW + out + Fore.RESET)
 
         # Write to log file
         if self.logger is not None:
-            self.logger.info('%s %s %i' % (url, parsed['status'], parsed['length']))
+            if exception is None:
+                self.logger.info('%s %s %i' % (url, parsed['status'], parsed['length']))
+            else:
+                self.logger.info('%s %s %i %s' % (url, parsed['status'], parsed['length'], exception))
 
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
@@ -218,7 +224,7 @@ class Output(object):
                 self.json.write(unicode(dumps(parsed, ensure_ascii=False)))
 
             # Save contents to file
-            if self.dump is not None:
+            if self.dump is not None and exception is None:
                 self.write_dump(url, response)
 
         # Realse lock
@@ -397,27 +403,28 @@ class HttpScanner(object):
 
         # Query URL and handle exceptions
         response = None
+        exception = None
         try:
             # TODO: add support for user:password in URL
             response = self.session.get(url, headers=headers, allow_redirects=self.args.allow_redirects)
         except ConnectionError:
             self.output.write_log('Connection error while quering %s' % url, logging.ERROR)
-            # return None
+            exception = ConnectionError
         except HTTPError:
             self.output.write_log('HTTP error while quering %s' % url, logging.ERROR)
-            # return None
+            exception = HTTPError
         except Timeout:
             self.output.write_log('Timeout while quering %s' % url, logging.ERROR)
-            # return None
+            exception = Timeout
         except TooManyRedirects:
             self.output.write_log('Too many redirects while quering %s' % url, logging.ERROR)
-            # return None
+            exception = TooManyRedirects
         except Exception:
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
-            # return None
+            exception = Exception
 
-        self.output.write(url, response)
-        # return response
+        self.output.write(url, response, exception)
+
 
     def signal_handler(self):
         """
