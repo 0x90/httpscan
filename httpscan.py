@@ -43,7 +43,7 @@ from sqlalchemy_utils.functions import create_database, database_exists
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData
 from requests import ConnectionError, HTTPError, Timeout, TooManyRedirects
 from requests.adapters import HTTPAdapter
-from requests import packages, get
+from requests import packages, get, options, head
 from requesocks import session
 from cookies import Cookies
 from fake_useragent import UserAgent
@@ -477,15 +477,33 @@ class HttpScanner(object):
                 self.output.write_log('Worker %i finished.' % num)
                 self.hosts_queue.task_done()
 
+    def _head_available(self, host):
+        # Trying to use OPTIONS request
+        response = self.session.options(host)
+        o = response.headers['allow'] if 'allow' in response.headers else None
+
+        # Determine if HEAD requests is allowed
+        if o is not None:
+            head_available = False if o.find('HEAD') == -1 else True
+        else:
+            head_available = False if self.session.head(host).status_code == 405 else True
+
+        return head_available
+
     def _scan_host(self, worker_id, host):
-        # TODO: check if HEAD requests are available
         # TODO: add ICMP ping check
         # TODO: add SYN check and scan
+        head_available = False
+        if self.args.head:
+            head_available = self._head_available(host)
+            if head_available:
+                self.output.write_log('HEAD is supported for %s' % host)
+
         for url in self.urls:
             full_url = urljoin(self._host_to_url(host), url)
-            self._scan_url(worker_id, full_url)
+            self._scan_url(worker_id, full_url, head_available)
 
-    def _scan_url(self, worker_id, url):
+    def _scan_url(self, worker_id, url, use_head=False):
         """
         Scan specified URL with HTTP GET request
         :param url: url to scan
@@ -508,7 +526,10 @@ class HttpScanner(object):
         response, exception = None, None
         try:
             # TODO: add support for user:password in URL
-            response = self.session.get(url, headers=headers, allow_redirects=self.args.allow_redirects)
+            if use_head:
+                response = self.session.head(url, headers=headers, allow_redirects=self.args.allow_redirects)
+            else:
+                response = self.session.get(url, headers=headers, allow_redirects=self.args.allow_redirects)
         except ConnectionError as exception:
             self.output.write_log('Connection error while quering %s' % url, logging.ERROR)
         except HTTPError as exception:
@@ -588,7 +609,7 @@ def main():
     group.add_argument('-s', '--skip', type=int, help='skip host if errors count reached value')
     group.add_argument('-r', '--allow-redirects', action='store_true', help='follow redirects')
     group.add_argument('--tor', action='store_true', help='Use TOR as proxy')
-    # group.add_argument('-H', '--head', action='store_true', help='try to use HEAD request if possible')
+    group.add_argument('-H', '--head', action='store_true', help='try to use HEAD request if possible')
     # group.add_argument('-i', '--ping', action='store_true', help='use ICMP ping request to detect if host available')
     # group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
     # group.add_argument('-P', '--port',  help='ports to scan')
