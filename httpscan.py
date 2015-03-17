@@ -15,12 +15,14 @@ __version__ = '0.3'
 
 # Check Python version
 from platform import python_version
+
 if python_version() == '2.7.9':
     print("Gevent doesn't work in proper way under Python 2.7.9")
     print("https://github.com/gevent/gevent/issues/477")
     exit(-1)
 
 from gevent import monkey
+
 monkey.patch_all()
 
 # Basic dependencies
@@ -140,13 +142,14 @@ class Output(object):
         """
         if response is None:
             return {'url': url,
-                'status': -1,
-                'length': -1,
-                'headers': None
-                }
+                    'status': -1,
+                    'length': -1,
+                    'headers': None
+                    }
 
         try:
-            length = int(response.headers['content-length']) if 'content-length' in response.headers else len(response.text)
+            length = int(response.headers['content-length']) if 'content-length' in response.headers else len(
+                response.text)
         except:
             # TODO: add proper check and encoding
             length = 0
@@ -185,7 +188,7 @@ class Output(object):
 
         # Calculate progreess
         self.urls_scanned += 1
-        percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned)/self.args.urls_count)
+        percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
         # TODO: add stats
 
         # Print colored output
@@ -199,7 +202,7 @@ class Output(object):
 
         # Write to log file
         if self.logger is not None:
-            self.logger.info('%s %s %i' % (url, response.status_code, parsed['length']))
+            self.logger.info('%s %s %i' % (url, parsed['status'], parsed['length']))
 
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
@@ -228,6 +231,9 @@ class Output(object):
         :param response:
         :return:
         """
+        if response is None:
+            return
+
         parsed = urlparse(url)
         host_folder = path.join(self.dump, parsed.netloc)
         p, f = path.split(parsed.path)
