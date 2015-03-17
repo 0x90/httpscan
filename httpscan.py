@@ -27,7 +27,7 @@ monkey.patch_all()
 
 # Basic dependencies
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
-from sys import exit
+from sys import exit, exc_info
 from os import path, makedirs
 from datetime import datetime
 from urlparse import urlparse, urljoin
@@ -191,11 +191,16 @@ class Output(object):
         percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
         # TODO: add detailed stats
 
+        # Parse excetion
+        exc_type = None
+        if exception is not None:
+            exc_type, exc_value, exc_traceback = exc_info()
+
         # Print colored output
         if exception is None:
             out = '[%s] [%s]\t%s -> %i' % (self._strnow(), percentage, parsed['url'], parsed['status'])
         else:
-            out = '[%s] [%s]\t%s -> %i (%s)' % (self._strnow(), percentage, parsed['url'], parsed['status'], exception)
+            out = '[%s] [%s]\t%s -> %i (%s)' % (self._strnow(), percentage, parsed['url'], parsed['status'], exc_type)
         if parsed['status'] == 200:
             print(Fore.GREEN + out + Fore.RESET)
         elif 400 <= parsed['status'] < 500 or parsed['status'] == -1:
@@ -208,7 +213,7 @@ class Output(object):
             if exception is None:
                 self.logger.info('%s %s %i' % (url, parsed['status'], parsed['length']))
             else:
-                self.logger.info('%s %s %i %s' % (url, parsed['status'], parsed['length'], exception))
+                self.logger.info('%s %s %i %s' % (url, parsed['status'], parsed['length'], exc_type))
 
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
@@ -260,7 +265,6 @@ class Output(object):
         f = open(filename, 'wb')
         f.write(content)
         f.close()
-
 
     def write_log(self, msg, loglevel=logging.INFO):
         """
@@ -424,7 +428,6 @@ class HttpScanner(object):
             exception = Exception
 
         self.output.write(url, response, exception)
-
 
     def signal_handler(self):
         """
