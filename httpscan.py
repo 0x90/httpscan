@@ -491,14 +491,22 @@ class HttpScanner(object):
 
     def _head_available(self, host):
         # Trying to use OPTIONS request
-        response = self.session.options(host)
+        try:
+            response = self.session.options(host)
+        except:
+            # TODO: fix
+            pass
         o = response.headers['allow'] if 'allow' in response.headers else None
 
         # Determine if HEAD requests is allowed
         if o is not None:
             head_available = False if o.find('HEAD') == -1 else True
         else:
-            head_available = False if self.session.head(host).status_code == 405 else True
+            try:
+                head_available = False if self.session.head(host).status_code == 405 else True
+            except:
+                #TODO: fix
+                pass
 
         return head_available
 
