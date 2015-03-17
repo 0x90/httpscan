@@ -506,12 +506,12 @@ class HttpScanner(object):
             pass
 
         try:
-            head_available = False if self.session.head(host).status_code == 405 else True
+            return False if self.session.head(host).status_code == 405 else True
         except:
             #TODO: fix
             return False
 
-        return head_available
+        return False
 
     def _icmp_ping(self, host, timeout=10):
         # TODO: check and debug
