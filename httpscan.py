@@ -138,6 +138,13 @@ class Output(object):
         :param response:
         :return:
         """
+        if response is None:
+            return {'url': url,
+                'status': -1,
+                'length': -1,
+                'headers': None
+                }
+
         try:
             length = int(response.headers['content-length']) if 'content-length' in response.headers else len(response.text)
         except:
