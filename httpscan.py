@@ -240,7 +240,7 @@ class HttpScannerOutput(object):
         # TODO: add detailed stats
 
         # Generate and print colored output
-        out = '[%s] [worker:%s] [%s]\t%s -> %i' % (strnow(), worker_id, percentage, parsed['url'], parsed['status'])
+        out = '[%s] [worker:%02i] [%s]\t%s -> %i' % (strnow(), worker_id, percentage, parsed['url'], parsed['status'])
         if exception is not None:
             out += '(%s)' % str(exception)
         if parsed['status'] == 200:
@@ -252,7 +252,7 @@ class HttpScannerOutput(object):
 
         # Write to log file
         if self.logger is not None:
-            out = '[worker:%s] %s %s %i' % (worker_id, url, parsed['status'], parsed['length'])
+            out = '[worker:%02i] %s %s %i' % (worker_id, url, parsed['status'], parsed['length'])
             if exception is None:
                 self.logger.info(out)
             else:
