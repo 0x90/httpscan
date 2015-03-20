@@ -83,6 +83,7 @@ def deduplicate(seq):
 
 
 class HttpScannerOutput(object):
+
     def __init__(self, args):
         # TODO: make separate queues for fast logging
         self.args = args
@@ -236,6 +237,7 @@ class HttpScannerOutput(object):
         # Acquire lock
         self.lock.acquire()
         parsed = self._parse_response(url, response)
+        status = parsed['status']
 
         # Calculate progreess
         self.urls_scanned += 1
@@ -243,52 +245,55 @@ class HttpScannerOutput(object):
         # TODO: add detailed stats
 
         # Generate and print colored output
-        out = '[%s] [worker:%02i] [%s]\t%s -> %i' % (strnow(), worker_id, percentage, parsed['url'], parsed['status'])
+        out = '[%s] [worker:%02i] [%s]\t%s -> %i' % (strnow(), worker_id, percentage, parsed['url'], status)
         if exception is not None:
             out += '(%s)' % str(exception)
-        if parsed['status'] == 200:
+        if status == 200:
             print(Fore.GREEN + out + Fore.RESET)
-        elif 400 <= parsed['status'] < 500 or parsed['status'] == -1:
+        elif 400 <= status < 500 or status == -1:
             print(Fore.RED + out + Fore.RESET)
         else:
             print(Fore.YELLOW + out + Fore.RESET)
 
         # Write to log file
         if self.logger is not None:
-            out = '[worker:%02i] %s %s %i' % (worker_id, url, parsed['status'], parsed['length'])
+            out = '[worker:%02i] %s %s %i' % (worker_id, url, status, parsed['length'])
             if exception is None:
                 self.logger.info(out)
             else:
                 self.logger.error("%s %s" % (out, str(exception)))
 
         # Check for exception
-        if exception is not None:
-            self.lock.release()
-            return
+        if exception is None:
+            self._filter_and_write(url, response, parsed)
 
+        # Realse lock
+        self.lock.release()
+
+    def _filter_and_write(self, url, response, parsed):
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
                 (self.args.allow is not None and parsed['status'] in self.args.allow) or \
                 (self.args.ignore is not None and parsed['status'] not in self.args.ignore):
+            self._write_csv(parsed)
+            self._write_json(parsed)
+            self._write_dump(url, response)
+            self._write_db(parsed)
 
-            # Write to CSV file
-            if self.csv is not None:
-                self.csv.writerow([parsed['url'], parsed['status'], parsed['length'], parsed['headers']])
+    def _write_csv(self, parsed):
+        # Write to CSV file
+        if self.csv is None:
+            return
 
-            # Write to JSON file
-            if self.json is not None:
-                self.json.write(unicode(dumps(parsed, ensure_ascii=False)))
+        self.csv.writerow([parsed['url'], parsed['status'], parsed['length'], parsed['headers']])
 
-            # Save contents to file
-            if self.dump is not None:
-                self._write_dump(url, response)
+    def _write_json(self, parsed):
+        # Write to JSON file
+        if self.json is None:
+            return
 
-            # Write to database
-            if self.engine is not None:
-                self._write_db(parsed)
-
-        # Realse lock
-        self.lock.release()
+        # TODO: bugfix appending json
+        self.json.write(unicode(dumps(parsed, ensure_ascii=False)))
 
     def _write_dump(self, url, response):
         """
@@ -297,7 +302,7 @@ class HttpScannerOutput(object):
         :param response: response
         :return: None
         """
-        if response is None:
+        if response is None or self.dump is None:
             return
 
         # Generate folder and file path
@@ -322,6 +327,8 @@ class HttpScannerOutput(object):
         f.close()
 
     def _write_db(self, parsed):
+        if self.engine is None:
+            return
         # TODO: check if url exists in table
         self.scan_table.insert()
         self.engine.execute(self.scan_table.insert().execution_options(autocommit=True), parsed)
@@ -556,18 +563,11 @@ class HttpScanner(object):
                 errors_count += 1
 
             if self.args.skip is not None and errors_count == self.args.skip:
-                self.output.logger.warning('Errors limit reached on %s Skipping other urls.' % host)
+                self.output.write_log('Errors limit reached on %s Skipping other urls.' % host, logging.WARNING)
                 self.output.urls_scanned += len(self.urls) - urls_scanned
                 return
 
-    def _scan_url(self, worker_id, url, use_head=False):
-        """
-        Scan specified URL with HTTP GET request
-        :param url: url to scan
-        :return: HTTP response
-        """
-        self.output.write_log('Scanning %s' % url, logging.DEBUG)
-
+    def _fill_headers(self):
         # Fill UserAgent in headers
         headers = {}
         if self.args.user_agent is not None:
@@ -579,29 +579,39 @@ class HttpScanner(object):
         if self.args.referer is not None:
             headers['Referer'] = self.args.referer
 
+        return headers
+
+    def _scan_url(self, worker_id, url, use_head=False):
+        """
+        Scan specified URL with HTTP GET request
+        :param url: url to scan
+        :return: HTTP response
+        """
+        self.output.write_log('Scanning %s' % url, logging.DEBUG)
+
         # Query URL and handle exceptions
         response, exception = None, None
         try:
             # TODO: add support for user:password in URL
             if use_head:
-                response = self.session.head(url, headers=headers, allow_redirects=self.args.allow_redirects)
+                response = self.session.head(url, headers=self._fill_headers(), allow_redirects=self.args.allow_redirects)
             else:
-                response = self.session.get(url, headers=headers, allow_redirects=self.args.allow_redirects)
-        except ConnectionError as e:
+                response = self.session.get(url, headers=self._fill_headers(), allow_redirects=self.args.allow_redirects)
+        except ConnectionError as ex:
             self.output.write_log('Connection error while quering %s' % url, logging.ERROR)
-            exception = e
-        except HTTPError as e:
+            exception = ex
+        except HTTPError as ex:
             self.output.write_log('HTTP error while quering %s' % url, logging.ERROR)
-            exception = e
-        except Timeout as e:
+            exception = ex
+        except Timeout as ex:
             self.output.write_log('Timeout while quering %s' % url, logging.ERROR)
-            exception = e
-        except TooManyRedirects as e:
+            exception = ex
+        except TooManyRedirects as ex:
             self.output.write_log('Too many redirects while quering %s' % url, logging.ERROR)
-            exception = e
-        except Exception as e:
+            exception = ex
+        except Exception as ex:
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
-            exception = e
+            exception = ex
 
         self.output.write(worker_id, url, response, exception)
         return response if exception is None else None
