@@ -556,6 +556,7 @@ class HttpScanner(object):
                 errors_count += 1
 
             if self.args.skip is not None and errors_count == self.args.skip:
+                self.output.logger.warning('Errors limit reached on %s Skipping other urls.' % host)
                 self.output.urls_scanned += len(self.urls) - urls_scanned
                 return
 
