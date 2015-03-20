@@ -27,7 +27,7 @@ monkey.patch_all()
 # Basic dependencies
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from sys import exit
-from os import path, makedirs
+from os import path, makedirs, geteuid
 from datetime import datetime
 from urlparse import urlparse, urljoin
 from csv import writer, QUOTE_ALL
@@ -53,10 +53,13 @@ from gevent.lock import RLock
 from gevent import spawn
 import gevent
 
-# Scapy
-logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
-from scapy.all import *
-from scapy.layers.inet import ICMP, TCP, IP
+try:
+    logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
+    from scapy.all import *
+    from scapy.layers.inet import ICMP, TCP, IP
+    SCAPY_FOUND = True
+except ImportError:
+    SCAPY_FOUND = False
 
 
 def strnow(format='%d.%m.%Y %H:%M:%S'):
@@ -398,6 +401,7 @@ class HttpScanner(object):
         # TODO: debug and check
         # self.session.mount("http://", HTTPAdapter(max_retries=self.args.max_retries))
         # self.session.mount("https://", HTTPAdapter(max_retries=self.args.max_retries))
+        # http://stackoverflow.com/questions/15431044/can-i-set-max-retries-for-requests-request
         # Max retries
         adapters.DEFAULT_RETRIES = self.args.max_retries
 
@@ -476,7 +480,7 @@ class HttpScanner(object):
             exit(-1)
 
         # Preparing lines list
-        lines = filter(lambda x: x is not None and len(x) > 0, open(filename).read().split('\n'))
+        lines = filter(lambda line: line is not None and len(line) > 0, open(filename).read().split('\n'))
         return deduplicate(lines) if dedup else lines
 
     def worker(self, num):
@@ -543,13 +547,16 @@ class HttpScanner(object):
                 self.output.write_log('HEAD is supported for %s' % host)
 
         errors_count = 0
+        urls_scanned = 0
         for url in self.urls:
             full_url = urljoin(self._host_to_url(host), url)
             r = self._scan_url(worker_id, full_url, head_available)
+            urls_scanned += 1
             if r is None:
                 errors_count += 1
 
             if self.args.skip is not None and errors_count == self.args.skip:
+                self.output.urls_scanned += len(self.urls) - urls_scanned
                 return
 
     def _scan_url(self, worker_id, url, use_head=False):
@@ -579,24 +586,24 @@ class HttpScanner(object):
                 response = self.session.head(url, headers=headers, allow_redirects=self.args.allow_redirects)
             else:
                 response = self.session.get(url, headers=headers, allow_redirects=self.args.allow_redirects)
-        except ConnectionError as exception:
+        except ConnectionError as e:
             self.output.write_log('Connection error while quering %s' % url, logging.ERROR)
-            return None
-        except HTTPError as exception:
+            exception = e
+        except HTTPError as e:
             self.output.write_log('HTTP error while quering %s' % url, logging.ERROR)
-            return None
-        except Timeout as exception:
+            exception = e
+        except Timeout as e:
             self.output.write_log('Timeout while quering %s' % url, logging.ERROR)
-            return None
-        except TooManyRedirects as exception:
+            exception = e
+        except TooManyRedirects as e:
             self.output.write_log('Too many redirects while quering %s' % url, logging.ERROR)
-            return None
-        except Exception as exception:
+            exception = e
+        except Exception as e:
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
-            return None
+            exception = e
 
         self.output.write(worker_id, url, response, exception)
-        return response
+        return response if exception is None else None
 
     def signal_handler(self):
         """
@@ -644,30 +651,39 @@ def main():
     parser = ArgumentParser('httpscan', description='Multithreaded HTTP scanner',
                             formatter_class=ArgumentDefaultsHelpFormatter, fromfile_prefix_chars='@')
 
-    # main options
+    # Main options
     parser.add_argument('hosts', help='hosts file')
     parser.add_argument('urls', help='urls file')
 
-    # scan options
+    # Scan options
     group = parser.add_argument_group('Scan options')
     group.add_argument('-t', '--timeout', type=int, default=5, help='scan timeout')
     group.add_argument('-T', '--threads', type=int, default=5, help='threads count')
     group.add_argument('-m', '--max-retries', type=int, default=3, help='Max retries for the request')
     group.add_argument('-p', '--proxy', help='HTTP/SOCKS proxy to use (http://user:pass@127.0.0.1:8080)')
+    group.add_argument('-d', '--dump', help='save found files to directory')
+    group.add_argument('-s', '--skip', type=int, help='skip host if errors count reached value')
+    group.add_argument('-r', '--allow-redirects', action='store_true', help='follow redirects')
+    group.add_argument('-H', '--head', action='store_true', help='try to use HEAD request if possible')
+    group.add_argument('--tor', action='store_true', help='Use TOR as proxy')
+
+    # HTTP options
+    group = parser.add_argument_group('HTTP options')
     group.add_argument('-a', '--auth', help='HTTP Auth user:password')
     group.add_argument('-c', '--cookies', help='cookies to send during scan')
     group.add_argument('-C', '--load-cookies', help='load cookies from specified file')
     group.add_argument('-u', '--user-agent', help='User-Agent to use')
     group.add_argument('-U', '--random-agent', action='store_true', help='use random User-Agent')
-    group.add_argument('-d', '--dump', help='save found files to directory')
     group.add_argument('-R', '--referer', help='referer URL')
-    group.add_argument('-s', '--skip', type=int, help='skip host if errors count reached value')
-    group.add_argument('-r', '--allow-redirects', action='store_true', help='follow redirects')
-    group.add_argument('-H', '--head', action='store_true', help='try to use HEAD request if possible')
-    group.add_argument('--tor', action='store_true', help='Use TOR as proxy')
-    # group.add_argument('-i', '--ping', action='store_true', help='use ICMP ping request to detect if host available')
-    # group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
-    # group.add_argument('-P', '--port',  help='ports to scan')
+
+    if SCAPY_FOUND:
+        if geteuid() == 0:
+            group = parser.add_argument_group('Advanced scan options')
+            group.add_argument('-i', '--ping', action='store_true', help='use ICMP ping request to detect if host available')
+            group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
+            group.add_argument('-P', '--ports', nargs='+', type=int, help='ports to scan')
+        else:
+            print("Run as root to enable Scapy based features (ICMP/SYN scan).")
 
     # filter options
     group = parser.add_argument_group('Filter options')
@@ -684,13 +700,12 @@ def main():
                        help='output results to database via SQLAlchemy (postgres://postgres@localhost/name)')
 
     # Debug and logging options
-    group = parser.add_argument_group('Debug output and logging options')
+    group = parser.add_argument_group('Debug and logging options')
     group.add_argument('-D', '--debug', action='store_true', help='write program debug output to file')
     group.add_argument('-L', '--log-file', help='debug log path')
 
     # Parse args and start scanning
-    args = parser.parse_args()
-    http_scan(args)
+    http_scan(parser.parse_args())
 
 
 if __name__ == '__main__':
