@@ -195,21 +195,9 @@ class HttpScannerOutput(object):
         self.metadata.create_all(self.engine)
 
     def write(self, **kwargs):
-        """
-        Write url and response to output asynchronously
-        :param url:
-        :param response:
-        :return: None
-        """
         spawn(self.write_func, **kwargs)
 
     def write_func(self, **kwargs):
-        """
-        Write url and response to output synchronously
-        :param url: url scanned
-        :param response: response to parse
-        :return: None
-        """
         # Acquire lock
         self.lock.acquire()
 
@@ -453,10 +441,6 @@ class HttpScanner(object):
         # User-Agent
         self.ua = UserAgent() if self.args.random_agent else None
 
-    def _host_to_url(self, host):
-        return 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
-            'http') else host
-
     def _file_to_list(self, filename, dedup=False):
         """
         Get list from file
@@ -523,9 +507,16 @@ class HttpScanner(object):
 
         return []
 
+    def _host_to_url(self, host):
+        return 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
+            'http') else host
+
     def _scan_host(self, worker_id, host):
         # TODO: add ICMP ping check
+
         # TODO: add SYN check and scan
+
+        host_url = self._host_to_url(host)
         head_available = False
         if self.args.head:
             head_available = self._head_available(host)
@@ -535,7 +526,7 @@ class HttpScanner(object):
         errors_count = 0
         urls_scanned = 0
         for url in self.urls:
-            full_url = urljoin(self._host_to_url(host), url)
+            full_url = urljoin(host_url, url)
             r = self._scan_url(full_url, head_available)
             urls_scanned += 1
 
