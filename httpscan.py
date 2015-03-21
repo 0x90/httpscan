@@ -22,6 +22,7 @@ if python_version() == '2.7.9':
 
 # Gevent monkey patching
 from gevent import monkey
+
 monkey.patch_all()
 
 # Basic dependencies
@@ -48,15 +49,18 @@ from requesocks import session
 from cookies import Cookies
 from fake_useragent import UserAgent
 from colorama import init, Fore
+from humanize import naturalsize
 from gevent.queue import JoinableQueue
 from gevent.lock import RLock
 from gevent import spawn
 import gevent
 
+
 try:
     logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
     from scapy.all import *
     from scapy.layers.inet import ICMP, TCP, IP
+
     SCAPY_FOUND = True
 except ImportError:
     SCAPY_FOUND = False
@@ -83,12 +87,11 @@ def deduplicate(seq):
 
 
 class HttpScannerOutput(object):
-
     def __init__(self, args):
         # TODO: make separate queues for fast logging
         self.args = args
         self.lock = RLock()
-        self.log_lock = RLock()
+        # self.log_lock = RLock()
 
         # Colorama init
         init()
@@ -192,42 +195,16 @@ class HttpScannerOutput(object):
                                 )
         self.metadata.create_all(self.engine)
 
-    def _parse_response(self, url, response):
-        """
-        Parse url and response to dictionary
-        :param url:
-        :param response:
-        :return: None
-        """
-        if response is None:
-            return {'url': url,
-                    'status': -1,
-                    'length': -1,
-                    'headers': None
-                    }
-
-        try:
-            length = int(response.headers['content-length']) if 'content-length' in response.headers else len(
-                response.text)
-        except Exception as exception:
-            self.write_log("Exception while getting content length for URL: %s Exception: %s" % (url, str(exception)))
-            length = 0
-        return {'url': url,
-                'status': response.status_code,
-                'length': length,
-                'headers': str(response.headers)
-                }
-
-    def write(self, worker_id, url, response, exception):
+    def write(self, **kwargs):
         """
         Write url and response to output asynchronously
         :param url:
         :param response:
         :return: None
         """
-        spawn(self.write_func, worker_id, url, response, exception)
+        spawn(self.write_func, **kwargs)
 
-    def write_func(self, worker_id, url, response, exception):
+    def write_func(self, **kwargs):
         """
         Write url and response to output synchronously
         :param url: url scanned
@@ -236,77 +213,89 @@ class HttpScannerOutput(object):
         """
         # Acquire lock
         self.lock.acquire()
-        parsed = self._parse_response(url, response)
-        status = parsed['status']
 
-        # Calculate progreess
-        self.urls_scanned += 1
-        percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
-        # TODO: add detailed stats
-
-        # Generate and print colored output
-        out = '[%s] [worker:%02i] [%s]\t%s -> %i' % (strnow(), worker_id, percentage, parsed['url'], status)
-        if exception is not None:
-            out += '(%s)' % str(exception)
-        if status == 200:
-            print(Fore.GREEN + out + Fore.RESET)
-        elif 400 <= status < 500 or status == -1:
-            print(Fore.RED + out + Fore.RESET)
-        else:
-            print(Fore.YELLOW + out + Fore.RESET)
-
-        # Write to log file
-        if self.logger is not None:
-            out = '[worker:%02i] %s %s %i' % (worker_id, url, status, parsed['length'])
-            if exception is None:
-                self.logger.info(out)
-            else:
-                self.logger.error("%s %s" % (out, str(exception)))
+        # Output
+        self._display_progress(**kwargs)
+        self._write_log(**kwargs)
 
         # Check for exception
-        if exception is None:
-            self._filter_and_write(url, response, parsed)
+        if kwargs['exception'] is None:
+            self._filter_and_write(**kwargs)
 
         # Realse lock
         self.lock.release()
 
-    def _filter_and_write(self, url, response, parsed):
+    def _display_progress(self, **kwargs):
+        # TODO: add detailed stats
+        # Calculate progreess
+        self.urls_scanned += 1
+        percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
+
+        # Generate and print colored output
+        out = '[%s] [worker:%02i] [%s]\t%s ->\tstatus:%i\t' % (strnow(), kwargs['worker'], percentage, kwargs['url'], kwargs['status'])
+        if kwargs['exception'] is not None:
+            out += 'error: (%s)' % str(kwargs['exception'])
+        else:
+            out += 'length: %s' % naturalsize(int(kwargs['length']))
+        if kwargs['status'] == 200:
+            print(Fore.GREEN + out + Fore.RESET)
+        elif 400 <= kwargs['status'] < 500 or kwargs['status'] == -1:
+            print(Fore.RED + out + Fore.RESET)
+        else:
+            print(Fore.YELLOW + out + Fore.RESET)
+
+    def _filter_and_write(self, **kwargs):
         # Filter responses and save responses that are matching ignore, allow rules
         if (self.args.allow is None and self.args.ignore is None) or \
-                (self.args.allow is not None and parsed['status'] in self.args.allow) or \
-                (self.args.ignore is not None and parsed['status'] not in self.args.ignore):
-            self._write_csv(parsed)
-            self._write_json(parsed)
-            self._write_dump(url, response)
-            self._write_db(parsed)
+                (self.args.allow is not None and kwargs['status'] in self.args.allow) or \
+                (self.args.ignore is not None and kwargs['status'] not in self.args.ignore):
+            self._write_csv(kwargs)
+            self._write_json(kwargs)
+            self._write_dump(kwargs)
+            self._write_db(kwargs)
 
-    def _write_csv(self, parsed):
+    def _kwargs_to_params(self, **kwargs):
+        return {'url': kwargs['url'], 'status': kwargs['status'], 'length': kwargs['length'],
+                  'headers': str(kwargs['response'].headers)}
+
+    def _write_log(self, **kwargs):
+        # Write to log file
+        if self.logger is None:
+            return
+
+        out = '[worker:%02i] %s %s %i' % (kwargs['worker'], kwargs['url'], kwargs['status'], kwargs['length'])
+        if kwargs['exception'] is None:
+            self.logger.info(out)
+        else:
+            self.logger.error("%s %s" % (out, str(kwargs['exception'])))
+
+    def _write_csv(self, **kwargs):
         # Write to CSV file
         if self.csv is None:
             return
 
-        self.csv.writerow([parsed['url'], parsed['status'], parsed['length'], parsed['headers']])
+        self.csv.writerow([kwargs['url'], kwargs['status'], kwargs['length'], str(kwargs['resonse'].headers)])
 
-    def _write_json(self, parsed):
+    def _write_json(self, **kwargs):
         # Write to JSON file
         if self.json is None:
             return
 
         # TODO: bugfix appending json
-        self.json.write(unicode(dumps(parsed, ensure_ascii=False)))
+        self.json.write(unicode(dumps(self._kwargs_to_params(kwargs), ensure_ascii=False)))
 
-    def _write_dump(self, url, response):
+    def _write_dump(self, **kwargs):
         """
         Write dump
         :param url: URL scanned
         :param response: response
         :return: None
         """
-        if response is None or self.dump is None:
+        if kwargs['response'] is None or self.dump is None:
             return
 
         # Generate folder and file path
-        parsed = urlparse(url)
+        parsed = urlparse(kwargs['url'])
         host_folder = path.join(self.dump, parsed.netloc)
         p, f = path.split(parsed.path)
         folder = path.join(host_folder, p[1:])
@@ -316,22 +305,22 @@ class HttpScannerOutput(object):
 
         # Get all content
         try:
-            content = response.content
+            content = kwargs['response'].content
         except Exception as exception:
-            self.write_log('Failed to get content for %s Exception: %s' % (url, str(exception)))
+            self.write_log('Failed to get content for %s Exception: %s' % (kwargs['url'], str(exception)))
             return
 
         # Save contents to file
-        f = open(filename, 'wb')
-        f.write(content)
-        f.close()
+        with open(filename, 'wb') as f:
+            f.write(content)
 
-    def _write_db(self, parsed):
+    def _write_db(self, **kwargs):
         if self.engine is None:
             return
         # TODO: check if url exists in table
         self.scan_table.insert()
-        self.engine.execute(self.scan_table.insert().execution_options(autocommit=True), parsed)
+        params = self._kwargs_to_params(kwargs)
+        self.engine.execute(self.scan_table.insert().execution_options(autocommit=True), params)
 
     def write_log(self, msg, loglevel=logging.INFO):
         """
@@ -343,7 +332,7 @@ class HttpScannerOutput(object):
         if self.logger is None:
             return
 
-        self.log_lock.acquire()
+        self.lock.acquire()
         if loglevel == logging.INFO:
             self.logger.info(msg)
         elif loglevel == logging.DEBUG:
@@ -353,7 +342,7 @@ class HttpScannerOutput(object):
         elif loglevel == logging.WARNING:
             self.logger.warning(msg)
 
-        self.log_lock.release()
+        self.lock.release()
 
     def print_and_log(self, msg, loglevel=logging.INFO):
         # TODO: make separate logging
@@ -427,7 +416,8 @@ class HttpScanner(object):
             try:
                 real_ip = get(url).text.strip()
             except Exception as exception:
-                self.output.print_and_log("Couldn't get real IP address. Check yout internet connection.", logging.ERROR)
+                self.output.print_and_log("Couldn't get real IP address. Check yout internet connection.",
+                                          logging.ERROR)
                 self.output.write_log(str(exception), logging.ERROR)
                 exit(-1)
 
@@ -519,10 +509,9 @@ class HttpScanner(object):
         try:
             return False if self.session.head(host).status_code == 405 else True
         except:
-            #TODO: fix
+            # TODO: fix
             return False
 
-        return False
 
     def _icmp_ping(self, host, timeout=10):
         # TODO: check and debug
@@ -557,9 +546,11 @@ class HttpScanner(object):
         urls_scanned = 0
         for url in self.urls:
             full_url = urljoin(self._host_to_url(host), url)
-            r = self._scan_url(worker_id, full_url, head_available)
+            r = self._scan_url(full_url, head_available)
+            r['worker'] = worker_id
+            self.output.write(**r)
             urls_scanned += 1
-            if r is None:
+            if r['exception'] is not None:
                 errors_count += 1
 
             if self.args.skip is not None and errors_count == self.args.skip:
@@ -581,7 +572,35 @@ class HttpScanner(object):
 
         return headers
 
-    def _scan_url(self, worker_id, url, use_head=False):
+    def _parse_response(self, url, response, exception):
+        # TODO: remove fields
+        res = {'url': url,
+               'response': response,
+               'exception': exception}
+
+        if response is None or exception is not None:
+            res.update({
+                'status': -1,
+                'length': -1,
+            })
+            return res
+
+        try:
+            length = int(response.headers['content-length']) if 'content-length' in response.headers else len(
+                response.text)
+        except Exception as exception:
+            self.output.write_log(
+                "Exception while getting content length for URL: %s Exception: %s" % (url, str(exception)),
+                logging.ERROR)
+            length = 0
+
+        res.update({
+            'status': response.status_code,
+            'length': length,
+        })
+        return res
+
+    def _scan_url(self, url, use_head=False):
         """
         Scan specified URL with HTTP GET request
         :param url: url to scan
@@ -591,12 +610,11 @@ class HttpScanner(object):
 
         # Query URL and handle exceptions
         response, exception = None, None
+        method = 'HEAD' if use_head else 'GET'
         try:
             # TODO: add support for user:password in URL
-            if use_head:
-                response = self.session.head(url, headers=self._fill_headers(), allow_redirects=self.args.allow_redirects)
-            else:
-                response = self.session.get(url, headers=self._fill_headers(), allow_redirects=self.args.allow_redirects)
+            response = self.session.request(method, url, headers=self._fill_headers(),
+                                            allow_redirects=self.args.allow_redirects)
         except ConnectionError as ex:
             self.output.write_log('Connection error while quering %s' % url, logging.ERROR)
             exception = ex
@@ -613,16 +631,14 @@ class HttpScanner(object):
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
             exception = ex
 
-        self.output.write(worker_id, url, response, exception)
-        return response if exception is None else None
+        return self._parse_response(url, response, exception)
 
     def signal_handler(self):
         """
         Signal hdndler
         :return:
         """
-        self.output.write_log('Signal caught. Stopping...', logging.WARNING)
-        print('Signal caught. Stopping...')
+        self.output.print_and_log('Signal caught. Stopping...', logging.WARNING)
         self.stop()
         exit(signal.SIGINT)
 
@@ -690,7 +706,8 @@ def main():
     if SCAPY_FOUND:
         if geteuid() == 0:
             group = parser.add_argument_group('Advanced scan options')
-            group.add_argument('-i', '--ping', action='store_true', help='use ICMP ping request to detect if host available')
+            group.add_argument('-i', '--ping', action='store_true',
+                               help='use ICMP ping request to detect if host available')
             group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
             group.add_argument('-P', '--ports', nargs='+', type=int, help='ports to scan')
         else:
