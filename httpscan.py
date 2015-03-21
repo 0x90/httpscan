@@ -60,7 +60,6 @@ try:
     logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
     from scapy.all import *
     from scapy.layers.inet import ICMP, TCP, IP
-
     SCAPY_FOUND = True
 except ImportError:
     SCAPY_FOUND = False
@@ -232,7 +231,8 @@ class HttpScannerOutput(object):
         percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
 
         # Generate and print colored output
-        out = '[%s] [worker:%02i] [%s]\t%s ->\tstatus:%i\t' % (strnow(), kwargs['worker'], percentage, kwargs['url'], kwargs['status'])
+        out = '[%s] [worker:%02i] [%s]\t%s ->\tstatus:%i\t' % (
+            strnow(), kwargs['worker'], percentage, kwargs['url'], kwargs['status'])
         if kwargs['exception'] is not None:
             out += 'error: (%s)' % str(kwargs['exception'])
         else:
@@ -256,7 +256,7 @@ class HttpScannerOutput(object):
 
     def _kwargs_to_params(self, **kwargs):
         return {'url': kwargs['url'], 'status': kwargs['status'], 'length': kwargs['length'],
-                  'headers': str(kwargs['response'].headers)}
+                'headers': str(kwargs['response'].headers)}
 
     def _write_log(self, **kwargs):
         # Write to log file
@@ -270,14 +270,12 @@ class HttpScannerOutput(object):
             self.logger.error("%s %s" % (out, str(kwargs['exception'])))
 
     def _write_csv(self, **kwargs):
-        # Write to CSV file
         if self.csv is None:
             return
 
         self.csv.writerow([kwargs['url'], kwargs['status'], kwargs['length'], str(kwargs['resonse'].headers)])
 
     def _write_json(self, **kwargs):
-        # Write to JSON file
         if self.json is None:
             return
 
@@ -285,12 +283,6 @@ class HttpScannerOutput(object):
         self.json.write(unicode(dumps(self._kwargs_to_params(kwargs), ensure_ascii=False)))
 
     def _write_dump(self, **kwargs):
-        """
-        Write dump
-        :param url: URL scanned
-        :param response: response
-        :return: None
-        """
         if kwargs['response'] is None or self.dump is None:
             return
 
@@ -371,8 +363,7 @@ class HttpScanner(object):
         hosts_count = len(self.hosts)
         full_urls_count = len(self.urls) * len(self.hosts)
         self.output.write_log(
-            '%i hosts %i urls loaded, %i urls to scan' % (hosts_count, urls_count, full_urls_count),
-            logging.INFO)
+            '%i hosts %i urls loaded, %i urls to scan' % (hosts_count, urls_count, full_urls_count))
 
         # Check threds count vs hosts count
         if self.args.threads > hosts_count:
@@ -403,7 +394,7 @@ class HttpScanner(object):
 
         # TOR
         if self.args.tor:
-            self.output.write_log("TOR usage detected. Making some checks.", logging.INFO)
+            self.output.write_log("TOR usage detected. Making some checks.")
             self.session.proxies = {
                 'http': 'socks5://127.0.0.1:9050',
                 'https': 'socks5://127.0.0.1:9050'
@@ -430,7 +421,7 @@ class HttpScanner(object):
                 exit(-1)
 
             # Show IP addresses
-            self.output.print_and_log('Real IP: %s TOR IP: %s' % (real_ip, tor_ip), logging.INFO)
+            self.output.print_and_log('Real IP: %s TOR IP: %s' % (real_ip, tor_ip))
             if real_ip == tor_ip:
                 self.output.print_and_log("TOR doesn't work! Stop to be secure.", logging.ERROR)
                 exit(-1)
@@ -498,7 +489,7 @@ class HttpScanner(object):
         """
         # Trying to use OPTIONS request
         try:
-            response = self.session.options(host)
+            response = self.session.options(host, headers=self._fill_headers())
             o = response.headers['allow'] if 'allow' in response.headers else None
             if o is not None and o.find('HEAD') != -1:
                 return True
@@ -507,11 +498,10 @@ class HttpScanner(object):
             pass
 
         try:
-            return False if self.session.head(host).status_code == 405 else True
+            return False if self.session.head(host, headers=self._fill_headers()).status_code == 405 else True
         except:
             # TODO: fix
             return False
-
 
     def _icmp_ping(self, host, timeout=10):
         # TODO: check and debug
@@ -547,12 +537,15 @@ class HttpScanner(object):
         for url in self.urls:
             full_url = urljoin(self._host_to_url(host), url)
             r = self._scan_url(full_url, head_available)
+            urls_scanned += 1
+
+            # Output
             r['worker'] = worker_id
             self.output.write(**r)
-            urls_scanned += 1
             if r['exception'] is not None:
                 errors_count += 1
 
+            # Skip host on errors
             if self.args.skip is not None and errors_count == self.args.skip:
                 self.output.write_log('Errors limit reached on %s Skipping other urls.' % host, logging.WARNING)
                 self.output.urls_scanned += len(self.urls) - urls_scanned
@@ -573,7 +566,6 @@ class HttpScanner(object):
         return headers
 
     def _parse_response(self, url, response, exception):
-        # TODO: remove fields
         res = {'url': url,
                'response': response,
                'exception': exception}
@@ -601,11 +593,6 @@ class HttpScanner(object):
         return res
 
     def _scan_url(self, url, use_head=False):
-        """
-        Scan specified URL with HTTP GET request
-        :param url: url to scan
-        :return: HTTP response
-        """
         self.output.write_log('Scanning %s' % url, logging.DEBUG)
 
         # Query URL and handle exceptions
@@ -667,7 +654,6 @@ class HttpScanner(object):
         # TODO: add saving status via pickle
         gevent.killall(self.workers)
 
-
 def http_scan(args):
     start = strnow()
     HttpScanner(args).start()
@@ -706,7 +692,7 @@ def main():
     if SCAPY_FOUND:
         if geteuid() == 0:
             group = parser.add_argument_group('Advanced scan options')
-            group.add_argument('-i', '--ping', action='store_true',
+            group.add_argument('-i', '--icmp', action='store_true',
                                help='use ICMP ping request to detect if host available')
             group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
             group.add_argument('-P', '--ports', nargs='+', type=int, help='ports to scan')
