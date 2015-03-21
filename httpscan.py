@@ -20,17 +20,24 @@ if python_version() == '2.7.9':
     print("https://github.com/gevent/gevent/issues/477")
     exit(-1)
 
+
+
+
 # Gevent monkey patching
 from gevent import monkey
-
-monkey.patch_all()
+# monkey.patch_select()
+# monkey.patch_os()
+# monkey.patch_socket()
+# monkey.patch_ssl()
+# monkey.patch_all()
+monkey.patch_all(thread=False)
 
 # Basic dependencies
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from sys import exit
 from os import path, makedirs, geteuid
 from datetime import datetime
-from urlparse import urlparse, urljoin
+from urlparse import urlparse, urljoin, urlsplit
 from csv import writer, QUOTE_ALL
 from json import dumps
 from cookielib import MozillaCookieJar
@@ -55,15 +62,11 @@ from gevent.lock import RLock
 from gevent import spawn
 import gevent
 
-
-try:
-    logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
-    from scapy.all import *
-    from scapy.layers.inet import ICMP, TCP, IP
-    SCAPY_FOUND = True
-except ImportError:
-    SCAPY_FOUND = False
-
+import logging
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
+from scapy.all import *
+from scapy.layers.inet import ICMP, TCP, IP
+conf.verb = False
 
 def strnow(format='%d.%m.%Y %H:%M:%S'):
     """
@@ -237,10 +240,10 @@ class HttpScannerOutput(object):
         if (self.args.allow is None and self.args.ignore is None) or \
                 (self.args.allow is not None and kwargs['status'] in self.args.allow) or \
                 (self.args.ignore is not None and kwargs['status'] not in self.args.ignore):
-            self._write_csv(kwargs)
-            self._write_json(kwargs)
-            self._write_dump(kwargs)
-            self._write_db(kwargs)
+            self._write_csv(**kwargs)
+            self._write_json(**kwargs)
+            self._write_dump(**kwargs)
+            self._write_db(**kwargs)
 
     def _kwargs_to_params(self, **kwargs):
         return {'url': kwargs['url'], 'status': kwargs['status'], 'length': kwargs['length'],
@@ -487,10 +490,8 @@ class HttpScanner(object):
             # TODO: fix
             return False
 
-    def _icmp_ping(self, host, timeout=10):
-        # TODO: check and debug
-        response = sr1(IP(dst=host) / ICMP(), timeout=timeout)
-        return response is not None
+    def _icmp_ping(self, host):
+        return sr1(IP(dst=host)/ICMP(), timeout=self.args.timeout) is not None
 
     def _syn_scan(self, host, ports=[80]):
         # TODO: check and debug
@@ -511,11 +512,28 @@ class HttpScanner(object):
         return 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
             'http') else host
 
+    def _url_to_domain(self, url):
+        return urlsplit(url)[1].split(':')[0] if '://' in url else url
+        # domain = urlparse.urlsplit(url)[1].split(':')[0]
+        # if '://' not in url:
+        #     return url
+        # else:
+        #     return url.split('://')[1].split('/')[0]
+
     def _scan_host(self, worker_id, host):
-        # TODO: add ICMP ping check
+        domain = self._url_to_domain(host)
+        if self.args.icmp:
+            if self._icmp_ping(domain):
+                self.output.write_log('Host %s ICMP reply recived.' % domain)
+            else:
+                self.output.write_log('ICMP reply from %s not recived. Skipping host.' % domain, logging.WARNING)
+                self.output.urls_scanned += len(self.urls)
 
         # TODO: add SYN check and scan
+        if self.args.syn:
+            pass
 
+        # Check for HEAD
         host_url = self._host_to_url(host)
         head_available = False
         if self.args.head:
@@ -523,8 +541,7 @@ class HttpScanner(object):
             if head_available:
                 self.output.write_log('HEAD is supported for %s' % host)
 
-        errors_count = 0
-        urls_scanned = 0
+        errors_count, urls_scanned = 0, 0
         for url in self.urls:
             full_url = urljoin(host_url, url)
             r = self._scan_url(full_url, head_available)
@@ -616,6 +633,7 @@ class HttpScanner(object):
         Signal hdndler
         :return:
         """
+        # TODO: add saving status via pickle
         self.output.print_and_log('Signal caught. Stopping...', logging.WARNING)
         self.stop()
         exit(signal.SIGINT)
@@ -642,8 +660,9 @@ class HttpScanner(object):
         Stop scan
         :return:
         """
-        # TODO: add saving status via pickle
+        # TODO: stop correctly
         gevent.killall(self.workers)
+
 
 def http_scan(args):
     start = strnow()
@@ -680,15 +699,12 @@ def main():
     group.add_argument('-U', '--random-agent', action='store_true', help='use random User-Agent')
     group.add_argument('-R', '--referer', help='referer URL')
 
-    if SCAPY_FOUND:
-        if geteuid() == 0:
-            group = parser.add_argument_group('Advanced scan options')
-            group.add_argument('-i', '--icmp', action='store_true',
+    group = parser.add_argument_group('Advanced scan options')
+    group.add_argument('-i', '--icmp', action='store_true',
                                help='use ICMP ping request to detect if host available')
-            group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
-            group.add_argument('-P', '--ports', nargs='+', type=int, help='ports to scan')
-        else:
-            print("Run as root to enable Scapy based features (ICMP/SYN scan).")
+    group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
+    group.add_argument('-P', '--ports', nargs='+', type=int, help='ports for SYN scan')
+
 
     # filter options
     group = parser.add_argument_group('Filter options')
@@ -710,7 +726,13 @@ def main():
     group.add_argument('-L', '--log-file', help='debug log path')
 
     # Parse args and start scanning
-    http_scan(parser.parse_args())
+    args = parser.parse_args()
+    if args.icmp or args.syn:
+        if geteuid() != 0:
+            print("Run as root to use Scapy based features (ICMP/SYN scan).")
+            exit(-1)
+
+    http_scan(args)
 
 
 if __name__ == '__main__':
