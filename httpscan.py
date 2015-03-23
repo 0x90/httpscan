@@ -466,24 +466,26 @@ class HttpScanner(object):
         self.output = HttpScannerOutput(args)
         self._init_scan_options()
 
-        # Reading hosts file
+        # Reading files
         self.output.write_log("Reading files and deduplicating.", logging.INFO)
-        hosts = helper.file_to_list(args.hosts)
-        if hosts is None:
-            self.output.print_and_log('Hosts file %s not found!' % args.hosts, logging.ERROR)
-            exit(-1)
-        self.hosts = hosts
-
-        # Reading urls file
-        urls = helper.file_to_list(args.urls)
-        if urls is None:
-            self.output.print_and_log('Urls file %s not found!' % args.urls, logging.ERROR)
-            exit(-1)
-        self.urls = urls
+        self.hosts = self._file_to_list(args.hosts)
+        self.urls = self._file_to_list(args.urls)
 
         # Queue and workers
         self.hosts_queue = JoinableQueue()
         self.workers = []
+
+    def _file_to_list(self, filename):
+        lines = helper.file_to_list(filename)
+        if lines is None:
+            self.output.print_and_log('File %s not found!' % filename, logging.ERROR)
+            exit(-1)
+
+        if len(lines) == 0:
+            self.output.print_and_log('File %s is empty!' % filename, logging.ERROR)
+            exit(-1)
+
+        return lines
 
     def _init_scan_options(self):
         # Session
