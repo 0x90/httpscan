@@ -85,20 +85,6 @@ class helper(object):
         return [x for x in seq if not (x in seen or seen_add(x))]
 
     @staticmethod
-    def file_to_list(filename, dedup=True):
-        """
-        Get list from file
-        :param filename: file to read
-        :return: list of lines
-        """
-        if not path.exists(filename) or not path.isfile(filename):
-            return None
-
-        # Preparing lines list
-        lines = filter(lambda line: line is not None and len(line) > 0, open(filename).read().split('\n'))
-        return helper.deduplicate(lines) if dedup else lines
-
-    @staticmethod
     def host_to_url(host):
         return 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
             'http') else host
@@ -469,23 +455,35 @@ class HttpScanner(object):
         # Reading files
         self.output.write_log("Reading files and deduplicating.", logging.INFO)
         self.hosts = self._file_to_list(args.hosts)
+        if self.args.ports is None and not self.args.syn:
+            new_hosts = []
+            for host in self.hosts:
+                for port in self.args.ports:
+                    new_hosts.append(helper.generate_url(host, port))
+            self.hosts = new_hosts
         self.urls = self._file_to_list(args.urls)
 
         # Queue and workers
         self.hosts_queue = JoinableQueue()
         self.workers = []
 
-    def _file_to_list(self, filename):
-        lines = helper.file_to_list(filename)
-        if lines is None:
+    def _file_to_list(self, filename, dedup=True):
+        """
+        Get list from file
+        :param filename: file to read
+        :return: list of lines
+        """
+        if not path.exists(filename) or not path.isfile(filename):
             self.output.print_and_log('File %s not found!' % filename, logging.ERROR)
             exit(-1)
 
+        # Preparing lines list
+        lines = filter(lambda line: line is not None and len(line) > 0, open(filename).read().split('\n'))
         if len(lines) == 0:
             self.output.print_and_log('File %s is empty!' % filename, logging.ERROR)
             exit(-1)
 
-        return lines
+        return helper.deduplicate(lines) if dedup else lines
 
     def _init_scan_options(self):
         # Session
