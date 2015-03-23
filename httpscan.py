@@ -198,7 +198,7 @@ class HttpScannerOutput(object):
         percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
 
         # Generate and print colored output
-        out = '[%s] [worker:%02i] [%s]\t%s ->\tstatus:%i\t' % (
+        out = '[%s] [worker:%02i] [%s]\t%s -> status:%i ' % (
             helper.str_now(), kwargs['worker'], percentage, kwargs['url'], kwargs['status'])
         if kwargs['exception'] is not None:
             out += 'error: (%s)' % str(kwargs['exception'])
@@ -331,14 +331,15 @@ class helper(object):
 
     @staticmethod
     def host_to_url(host):
+        # TODO: rewrite this dummy shit
         if host.lower().startswith('http'):
             return host
-        else:
-            for p in [443, 8443]:
-                if ':%i' % p in host:
-                    return 'https://%s' % host
 
-            return 'http://%s' % host
+        for p in [443, 8443]:
+            if ':%i' % p in host:
+                return 'https://%s' % host
+
+        return 'http://%s' % host
 
     @staticmethod
     def hosts_to_domain_dict(hosts):
@@ -367,6 +368,7 @@ class helper(object):
 
     @staticmethod
     def generate_url(host, port):
+        # TODO: rewrite this dummy shit
         domain = helper.url_to_domain(host) if '://' in host else host
         prefix = 'https://' if port in [443, 8443] else 'http://'
         return '%s%s:%i' % (prefix, domain, port)
