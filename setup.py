@@ -13,7 +13,7 @@ setup(
     author='@090h',
     author_email='root@0x90.ru',
     license='GPL',
-    keywords="HTTP, scanner, asynchronous, multithread",
+    keywords="HTTP, scanner asynchronous multithreaded",
     url="http://github.com/0x90/httpscan",
     description='Multithreaded  asynchronous HTTP scanner',
     packages=['httpscan'],
@@ -22,8 +22,13 @@ setup(
                       'SQLAlchemy-Utils',
                       'cookies',
                       'colorama',
-                      'gevent'
+                      'gevent',
+                      'humanize',
                       'fake-useragent',
                       'requests',
+                      'requesocks',
+                      'six',
+                      'pcapy',
+                      'scapy',
                       ]
 )
