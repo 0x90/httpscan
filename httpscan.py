@@ -25,11 +25,6 @@ if python_version() == '2.7.9':
 
 # Gevent monkey patching
 from gevent import monkey
-# monkey.patch_select()
-# monkey.patch_os()
-# monkey.patch_socket()
-# monkey.patch_ssl()
-# monkey.patch_all()
 monkey.patch_all(thread=False)
 
 # Basic dependencies
@@ -42,7 +37,6 @@ from csv import writer, QUOTE_ALL
 from json import dumps
 from cookielib import MozillaCookieJar
 from httplib import HTTPConnection
-import logging
 import signal
 import io
 
@@ -60,13 +54,15 @@ from humanize import naturalsize
 from gevent.queue import JoinableQueue
 from gevent.lock import RLock
 from gevent import spawn
+from pprint import pprint
 import gevent
-
 import logging
+
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import *
 from scapy.layers.inet import ICMP, TCP, IP
 conf.verb = False
+
 
 def strnow(format='%d.%m.%Y %H:%M:%S'):
     """
@@ -88,28 +84,127 @@ def deduplicate(seq):
     return [x for x in seq if not (x in seen or seen_add(x))]
 
 
+class helper(object):
+
+    @staticmethod
+    def host_to_url(host):
+        return 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
+            'http') else host
+
+    @staticmethod
+    def url_to_domain(url):
+        return urlsplit(url)[1].split(':')[0] if '://' in url else url
+        # domain = urlparse.urlsplit(url)[1].split(':')[0]
+        # if '://' not in url:
+        # return url
+        # else:
+        #     return url.split('://')[1].split('/')[0]
+
+    @staticmethod
+    def domain_to_ip(domain):
+        return socket.gethostbyname(domain)
+
+    @staticmethod
+    def domaint_to_ip_list(self, domain):
+        import dns.resolver
+        answers = dns.resolver.query(domain, 'A')
+        return [rdata for rdata in answers]
+
+    @staticmethod
+    def url_to_ip(url):
+        return helper.domain_to_ip(helper.url_to_domain(url))
+
+    @staticmethod
+    def generate_url(host, port):
+        prefix = 'https://' if port in [443, 8443] else 'http://'
+        return '%s%s:%i' % (prefix, host, port)
+
+    @staticmethod
+    def parse_url(url):
+        parsed = urlsplit(url)
+        return parsed[1].split(':')[0] if '://' in url else url, parsed.port
+
+
+class ScapyScanner(object):
+
+    def __init__(self, hosts, timeout=1):
+        self.hosts = hosts
+        self.timeout = timeout
+        self.domains = [helper.url_to_domain(host) for host in hosts]
+        self.domains_dict = dict(map(lambda d: (helper.domain_to_ip(d), d), self.domains))
+        self.ips = [ip for ip in self.domains_dict.keys()]
+        # pprint(domains_dict)
+
+    @staticmethod
+    def ping_host(host, timeout=1):
+        return sr1(IP(dst=host)/ICMP(), timeout=timeout) is not None
+
+    @staticmethod
+    def scan_host(host, port, timeout=0.5):
+        return sr1(IP(dst=host)/TCP(sport=RandShort(), dport=port, flags="S"), timeout=timeout) is not None
+
+    @staticmethod
+    def scan_url(url, timeout=0.5):
+        parsed = urlsplit(url)
+        host = parsed[1].split(':')[0] if '://' in url else url
+        return sr1(IP(dst=host)/TCP(sport=RandShort(), dport=parsed.port, flags="S"), timeout=timeout) is not None
+
+
+
+    def syn_scan(self, ports, http_prefix=True):
+        a, u = sr(IP(dst=self.ips)/TCP(sport=RandShort(), dport=ports, flags="S"), timeout=self.timeout)
+        available = {}
+        for snd, rcv in a:
+            if rcv[TCP].flags != 'SA':
+                continue
+
+            ip, port = rcv[IP].src, rcv[TCP].sport
+            if ip in available:
+                available[ip] = [port]
+            else:
+                available[ip].append(port)
+
+        # return dict((self.domains_dict[ip], available[ip]) for ip in available.keys())
+        if not http_prefix:
+            return available
+
+        # generate url list
+        urls = []
+        for ip in available.keys():
+            host = self.domains_dict[ip]
+            urls.extend([helper.generate_url(host, port) for port in self.domains_dict[ip]])
+        return urls
+
+    def icmp_scan(self, http_prefix=True):
+        a, u = sr(IP(dst=self.ips) / ICMP(), timeout=self.timeout, retry=3)
+        # domain names without http prefix
+        # available = deduplicate([self.domains_dict[rcv[IP].src] for snd, rcv in a])
+        available = [self.domains_dict[rcv[IP].src] for snd, rcv in a]
+        return filter(lambda d: helper.url_to_domain(d) in available, self.hosts) if http_prefix else available
+
+
 class HttpScannerOutput(object):
     def __init__(self, args):
         # TODO: make separate queues for fast logging
         self.args = args
         self.lock = RLock()
         # self.log_lock = RLock()
-
         # Colorama init
         init()
-
         # Initialise logging
         self._init_logger()
-        self._init_requests_output()
-
         # Initialise output
+        self._init_output()
+        # Stats
+        self.urls_scanned = 0
+
+    def _init_output(self):
+        # Initialise output
+        self._init_requests_output()
         self._init_csv()
         self._init_json()
         self._init_dump()
         self._init_db()
-
-        # Stats
-        self.urls_scanned = 0
 
     def _init_logger(self):
         """
@@ -264,7 +359,7 @@ class HttpScannerOutput(object):
         if self.csv is None:
             return
 
-        self.csv.writerow([kwargs['url'], kwargs['status'], kwargs['length'], str(kwargs['resonse'].headers)])
+        self.csv.writerow([kwargs['url'], kwargs['status'], kwargs['length'], str(kwargs['response'].headers)])
 
     def _write_json(self, **kwargs):
         if self.json is None:
@@ -349,26 +444,12 @@ class HttpScanner(object):
         self.hosts = self._file_to_list(args.hosts, True)
         self.urls = self._file_to_list(args.urls, True)
 
-        # Calculations
-        urls_count = len(self.urls)
-        hosts_count = len(self.hosts)
-        full_urls_count = len(self.urls) * len(self.hosts)
-        self.output.write_log(
-            '%i hosts %i urls loaded, %i urls to scan' % (hosts_count, urls_count, full_urls_count))
-
-        # Check threds count vs hosts count
-        if self.args.threads > hosts_count:
-            self.output.write_log('Too many threads! Fixing threads count to %i' % hosts_count, logging.WARNING)
-            self.threads_count = hosts_count
-        else:
-            self.threads_count = self.args.threads
-
-        # Output urls count
-        self.output.args.urls_count = full_urls_count
-
         # Queue and workers
         self.hosts_queue = JoinableQueue()
         self.workers = []
+
+        # Scapy scan
+        self.scapyscan = ScapyScanner()
 
     def _init_scan_options(self):
         # Session
@@ -458,14 +539,14 @@ class HttpScanner(object):
         lines = filter(lambda line: line is not None and len(line) > 0, open(filename).read().split('\n'))
         return deduplicate(lines) if dedup else lines
 
-    def worker(self, num):
-        self.output.write_log('Worker %i started.' % num)
+    def worker(self, worker_id):
+        self.output.write_log('Worker %i started.' % worker_id)
         while not self.hosts_queue.empty():
             host = self.hosts_queue.get()
             try:
-                self._scan_host(num, host)
+                self.scan_host(worker_id, host)
             finally:
-                self.output.write_log('Worker %i finished.' % num)
+                self.output.write_log('Worker %i finished.' % worker_id)
                 self.hosts_queue.task_done()
 
     def _head_available(self, host):
@@ -490,51 +571,9 @@ class HttpScanner(object):
             # TODO: fix
             return False
 
-    def _icmp_ping(self, host):
-        return sr1(IP(dst=host)/ICMP(), timeout=self.args.timeout) is not None
-
-    def _syn_scan(self, host, ports=[80]):
-        # TODO: check and debug
-        a, u = sr(IP(dst=host) / TCP(sport=RandShort(), dport=ports, flags="S"), timeout=0.1)
-        # ports =
-        a.summary(
-            # apply the filter function to each packet (i.e. decide whether
-            # it will be displayed or not)
-            lfilter=lambda (s, r): r.sprintf("%TCP.flags%") == "SA",
-            # function to apply to each packet
-            prn=lambda (s, r): r.sprintf("%TCP.sport% is open"
-                                         " (%TCP.flags%)")
-        )
-
-        return []
-
-    def _host_to_url(self, host):
-        return 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
-            'http') else host
-
-    def _url_to_domain(self, url):
-        return urlsplit(url)[1].split(':')[0] if '://' in url else url
-        # domain = urlparse.urlsplit(url)[1].split(':')[0]
-        # if '://' not in url:
-        #     return url
-        # else:
-        #     return url.split('://')[1].split('/')[0]
-
-    def _scan_host(self, worker_id, host):
-        domain = self._url_to_domain(host)
-        if self.args.icmp:
-            if self._icmp_ping(domain):
-                self.output.write_log('Host %s ICMP reply recived.' % domain)
-            else:
-                self.output.write_log('ICMP reply from %s not recived. Skipping host.' % domain, logging.WARNING)
-                self.output.urls_scanned += len(self.urls)
-
-        # TODO: add SYN check and scan
-        if self.args.syn:
-            pass
-
+    def scan_host(self, worker_id, host):
         # Check for HEAD
-        host_url = self._host_to_url(host)
+        host_url = helper.host_to_url(host)
         head_available = False
         if self.args.head:
             head_available = self._head_available(host)
@@ -544,7 +583,7 @@ class HttpScanner(object):
         errors_count, urls_scanned = 0, 0
         for url in self.urls:
             full_url = urljoin(host_url, url)
-            r = self._scan_url(full_url, head_available)
+            r = self.scan_url(full_url, head_available)
             urls_scanned += 1
 
             # Output
@@ -600,7 +639,7 @@ class HttpScanner(object):
         })
         return res
 
-    def _scan_url(self, url, use_head=False):
+    def scan_url(self, url, use_head=False):
         self.output.write_log('Scanning %s' % url, logging.DEBUG)
 
         # Query URL and handle exceptions
@@ -638,6 +677,12 @@ class HttpScanner(object):
         self.stop()
         exit(signal.SIGINT)
 
+    def _calc_urls(self):
+        # Calculations
+        self.urls_count = len(self.urls)
+        self.hosts_count = len(self.hosts)
+        self.full_urls_count = len(self.urls) * len(self.hosts)
+
     def start(self):
         """
         Start mulithreaded scan
@@ -648,8 +693,33 @@ class HttpScanner(object):
         gevent.signal(signal.SIGINT, self.signal_handler)
         gevent.signal(signal.SIGQUIT, self.signal_handler)
 
+        self._calc_urls()
+        self.output.print_and_log(
+            'Loaded %i hosts %i urls. %i full urls to scan' % (self.hosts_count, self.urls_count, self.full_urls_count))
+
+        # ICMP scan
+        if self.args.icmp:
+            if geteuid() != 0:
+                self.output.print_and_log('To use ICMP scan option you must run as root. Skipping ICMP scan', logging.WARNING)
+            else:
+                self.output.print_and_log('Starting ICMP scan.')
+                self.hosts = self.scapyscan.icmp_scan(self.hosts, self.args.timeout)
+                self._calc_urls()
+                self.output.print_and_log('After ICMP scan %i hosts %i urls loaded, %i urls to scan' %
+                                          (self.hosts_count, self.urls_count, self.full_urls_count))
+
+        # Check threds count vs hosts count
+        if self.args.threads > self.hosts_count:
+            self.output.write_log('Too many threads! Fixing threads count to %i' % self.hosts_count, logging.WARNING)
+            threads_count = self.hosts_count
+        else:
+            threads_count = self.args.threads
+
+        # Output urls count
+        self.output.args.urls_count = self.full_urls_count
+
         # Start workers
-        self.workers = [spawn(self.worker, i) for i in range(self.threads_count)]
+        self.workers = [spawn(self.worker, i) for i in range(threads_count)]
 
         # Fill and join queue
         [self.hosts_queue.put(host) for host in self.hosts]
@@ -701,10 +771,9 @@ def main():
 
     group = parser.add_argument_group('Advanced scan options')
     group.add_argument('-i', '--icmp', action='store_true',
-                               help='use ICMP ping request to detect if host available')
+                       help='use ICMP ping request to detect if host available')
     group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
-    group.add_argument('-P', '--ports', nargs='+', type=int, help='ports for SYN scan')
-
+    # group.add_argument('-P', '--ports', nargs='+', type=int, help='ports for SYN scan')
 
     # filter options
     group = parser.add_argument_group('Filter options')
@@ -726,13 +795,7 @@ def main():
     group.add_argument('-L', '--log-file', help='debug log path')
 
     # Parse args and start scanning
-    args = parser.parse_args()
-    if args.icmp or args.syn:
-        if geteuid() != 0:
-            print("Run as root to use Scapy based features (ICMP/SYN scan).")
-            exit(-1)
-
-    http_scan(args)
+    http_scan(parser.parse_args())
 
 
 if __name__ == '__main__':
