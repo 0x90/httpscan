@@ -195,7 +195,6 @@ class HttpScannerOutput(object):
     def _display_progress(self, **kwargs):
         # TODO: add detailed stats
         # Calculate progreess
-        # self.urls_scanned += 1
         percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
 
         # Generate and print colored output
@@ -238,10 +237,8 @@ class HttpScannerOutput(object):
             self.logger.error("%s %s" % (out, str(kwargs['exception'])))
 
     def _write_csv(self, **kwargs):
-        if self.csv is None:
-            return
-
-        self.csv.writerow([kwargs['url'], kwargs['status'], kwargs['length'], str(kwargs['response'].headers)])
+        if self.csv is not None:
+            self.csv.writerow([kwargs['url'], kwargs['status'], kwargs['length'], str(kwargs['response'].headers)])
 
     def _write_json(self, **kwargs):
         if self.json is None:
