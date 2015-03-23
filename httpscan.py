@@ -4,9 +4,10 @@
 # Multithreaded asynchronous HTTP scanner.
 # Feel free to contribute.
 #
-# Usage example:
+# Usage examples:
 # ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db
-#
+# ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db --icmp --syn --ports 80 443 8000 8080
+# ./httpscan.py @args.txt
 
 __author__ = '@090h'
 __license__ = 'GPL'
@@ -64,13 +65,13 @@ conf.verb = False
 class helper(object):
 
     @staticmethod
-    def strnow(format='%d.%m.%Y %H:%M:%S'):
+    def str_now(fmt='%d.%m.%Y %H:%M:%S'):
         """
         Current datetime to string
-        :param format: format string for output
+        :param fmt: format string for output
         :return: string for current datetime
         """
-        return datetime.now().strftime(format)
+        return datetime.now().strftime(fmt)
 
     @staticmethod
     def deduplicate(seq):
@@ -147,8 +148,8 @@ class helper(object):
 
     @staticmethod
     def domain_to_ip_list(domain):
-        import dns.resolver
-        answers = dns.resolver.query(domain, 'A')
+        from dns import resolver
+        answers = resolver.query(domain, 'A')
         return [rdata for rdata in answers]
 
     @staticmethod
@@ -344,7 +345,7 @@ class HttpScannerOutput(object):
 
         # Generate and print colored output
         out = '[%s] [worker:%02i] [%s]\t%s ->\tstatus:%i\t' % (
-            helper.strnow(), kwargs['worker'], percentage, kwargs['url'], kwargs['status'])
+            helper.str_now(), kwargs['worker'], percentage, kwargs['url'], kwargs['status'])
         if kwargs['exception'] is not None:
             out += 'error: (%s)' % str(kwargs['exception'])
         else:
@@ -450,7 +451,7 @@ class HttpScannerOutput(object):
 
     def print_and_log(self, msg, loglevel=logging.INFO):
         # TODO: make separate logging
-        print('[%s] %s' % (helper.strnow(), msg))
+        print('[%s] %s' % (helper.str_now(), msg))
         self.write_log(msg, loglevel)
 
 
@@ -729,6 +730,11 @@ class HttpScanner(object):
 
         # SYN scan
         if self.args.syn:
+            if self.args.tor or self.args.proxy is not None:
+                self.output.print_and_log('SYN scan via tor or proxy is impossible!', logging.WARNING)
+                self.output.print_and_log('Stopping to prevent deanonymization!', logging.WARNING)
+                exit(-1)
+
             if geteuid() != 0:
                 self.output.print_and_log('To use SYN scan option you must run as root. Skipping SYN scan', logging.WARNING)
             else:
@@ -765,9 +771,9 @@ class HttpScanner(object):
 
 
 def http_scan(args):
-    start = helper.strnow()
+    start = helper.str_now()
     HttpScanner(args).start()
-    print(Fore.RESET + 'Statisitcs:\nScan started %s\nScan finished %s' % (start, helper.strnow()))
+    print(Fore.RESET + 'Statisitcs:\nScan started %s\nScan finished %s' % (start, helper.str_now()))
 
 
 def main():
@@ -803,7 +809,7 @@ def main():
     group.add_argument('-i', '--icmp', action='store_true',
                        help='use ICMP ping request to detect if host available')
     group.add_argument('-S', '--syn', action='store_true', help='use SYN scan to check if port is available')
-    group.add_argument('-P', '--ports', nargs='+', type=int, help='ports for SYN scan')
+    group.add_argument('-P', '--ports', nargs='+', type=int, help='ports to scan')
 
     # filter options
     group = parser.add_argument_group('Filter options')
