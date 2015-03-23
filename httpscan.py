@@ -5,9 +5,11 @@
 # Feel free to contribute.
 #
 # Usage examples:
-# ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db
-# ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db --icmp --syn --ports 80 443 8000 8080
-# ./httpscan.py @args.txt
+#
+#   ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db
+#   ./httpscan.py hosts.txt urls.txt -T 10 -A 200 -r -U  -L scan.log --tor -oC test.csv -oD sqlite:///test.db --icmp --syn --ports 80 443 8000 8080
+#   ./httpscan.py @args.txt
+#
 
 __author__ = '@090h'
 __license__ = 'GPL'
@@ -62,141 +64,8 @@ from scapy.layers.inet import ICMP, TCP, IP
 conf.verb = False
 
 
-class helper(object):
-
-    @staticmethod
-    def str_now(fmt='%d.%m.%Y %H:%M:%S'):
-        """
-        Current datetime to string
-        :param fmt: format string for output
-        :return: string for current datetime
-        """
-        return datetime.now().strftime(fmt)
-
-    @staticmethod
-    def deduplicate(seq):
-        """
-        Deduplicate list
-        :param seq: list to deduplicate
-        :return: deduplicated list
-        """
-        seen = set()
-        seen_add = seen.add
-        return [x for x in seq if not (x in seen or seen_add(x))]
-
-    @staticmethod
-    def host_to_url(host):
-        return 'https://%s' % host if ':443' in host else 'http://%s' % host if not host.lower().startswith(
-            'http') else host
-
-    @staticmethod
-    def hosts_to_domain_dict(hosts):
-        domains = [helper.url_to_domain(host) for host in hosts]
-        return dict(map(lambda d: (helper.domain_to_ip(d), d), domains))
-
-    @staticmethod
-    def hosts_to_port_dict(hosts):
-        ports_dict = {}
-        for host, port in [helper.parse_url(host) for host in hosts]:
-            if port in ports_dict:
-                ports_dict[port].append(helper.url_to_ip(host))
-            else:
-                ports_dict[port] = [helper.url_to_ip(host)]
-
-        return ports_dict
-
-    @staticmethod
-    def parse_url(url):
-        parsed = urlsplit(url)
-        return parsed[1].split(':')[0] if '://' in url else url, parsed.port
-
-    @staticmethod
-    def url_to_ip(url):
-        return helper.domain_to_ip(helper.url_to_domain(url))
-
-    @staticmethod
-    def generate_url(host, port):
-        prefix = 'https://' if port in [443, 8443] else 'http://'
-        return '%s%s:%i' % (prefix, host, port)
-
-    @staticmethod
-    def url_to_domain(url):
-        return urlsplit(url)[1].split(':')[0] if '://' in url else url
-        # domain = urlparse.urlsplit(url)[1].split(':')[0]
-        # if '://' not in url:
-        # return url
-        # else:
-        #     return url.split('://')[1].split('/')[0]
-
-    @staticmethod
-    def domain_to_ip(domain):
-        return socket.gethostbyname(domain)
-
-    @staticmethod
-    def domain_to_ip_list(domain):
-        from dns import resolver
-        answers = resolver.query(domain, 'A')
-        return [rdata for rdata in answers]
-
-    @staticmethod
-    def ping_host(host, timeout=1):
-        return sr1(IP(dst=host)/ICMP(), timeout=timeout) is not None
-
-    @staticmethod
-    def scan_host(host, port, timeout=0.5):
-        return sr1(IP(dst=host)/TCP(sport=RandShort(), dport=port, flags="S"), timeout=timeout) is not None
-
-    @staticmethod
-    def scan_url(url, timeout=0.5):
-        parsed = urlsplit(url)
-        host = parsed[1].split(':')[0] if '://' in url else url
-        return sr1(IP(dst=host)/TCP(sport=RandShort(), dport=parsed.port, flags="S"), timeout=timeout) is not None
-
-    @staticmethod
-    def icmp_scan(hosts, timeout=3, http_prefix=True):
-        domains_dict = helper.hosts_to_domain_dict(hosts)
-        ips = [ip for ip in domains_dict.keys()]
-        a, u = sr(IP(dst=ips) / ICMP(), timeout=timeout, retry=3)
-        # domain names without http prefix
-        available = [domains_dict[rcv[IP].src] for snd, rcv in a]
-        return filter(lambda d: helper.url_to_domain(d) in available, hosts) if http_prefix else available
-
-    @staticmethod
-    def syn_scan(hosts, ports=None, timeout=3, http_prefix=True):
-        domains = helper.hosts_to_domain_dict(hosts)
-        available = {}
-
-        def parse_answered(answered):
-            for snd, rcv in answered:
-                if rcv[TCP].flags != 'SA':
-                    continue
-
-                if rcv[IP].src in available:
-                    available[rcv[IP].src] = [rcv[TCP].sport]
-                else:
-                    available[rcv[IP].src].append(rcv[TCP].sport)
-
-        if ports is None:
-            ports_dict = helper.hosts_to_port_dict(hosts)
-            for port in ports_dict.keys():
-                a = sr(IP(dst=ports_dict[port])/TCP(sport=RandShort(), dport=port, flags="S"), timeout=timeout)[0]
-                parse_answered(a)
-        else:
-            a = sr(IP(dst=[ip for ip in domains.keys()])/TCP(sport=RandShort(), dport=ports, flags="S"), timeout=timeout)[0]
-            parse_answered(a)
-
-        # return available host:ports dict
-        if not http_prefix:
-            return available
-
-        # generate url list
-        urls = []
-        for ip in available.keys():
-            urls.extend([helper.generate_url(domains[ip], port) for port in available[ip]])
-        return urls
-
-
 class HttpScannerOutput(object):
+
     def __init__(self, args):
         # TODO: make separate queues for fast logging
         self.args = args
@@ -326,7 +195,7 @@ class HttpScannerOutput(object):
     def _display_progress(self, **kwargs):
         # TODO: add detailed stats
         # Calculate progreess
-        self.urls_scanned += 1
+        # self.urls_scanned += 1
         percentage = '{percent:.2%}'.format(percent=float(self.urls_scanned) / self.args.urls_count)
 
         # Generate and print colored output
@@ -379,7 +248,7 @@ class HttpScannerOutput(object):
             return
 
         # TODO: bugfix appending json
-        self.json.write(unicode(dumps(self._kwargs_to_params(kwargs), ensure_ascii=False)))
+        self.json.write(unicode(dumps(self._kwargs_to_params(**kwargs), ensure_ascii=False)))
 
     def _write_dump(self, **kwargs):
         if kwargs['response'] is None or self.dump is None:
@@ -410,7 +279,7 @@ class HttpScannerOutput(object):
             return
         # TODO: check if url exists in table
         self.scan_table.insert()
-        params = self._kwargs_to_params(kwargs)
+        params = self._kwargs_to_params(**kwargs)
         self.engine.execute(self.scan_table.insert().execution_options(autocommit=True), params)
 
     def write_log(self, msg, loglevel=logging.INFO):
@@ -441,6 +310,147 @@ class HttpScannerOutput(object):
         self.write_log(msg, loglevel)
 
 
+class helper(object):
+
+    @staticmethod
+    def str_now(fmt='%d.%m.%Y %H:%M:%S'):
+        """
+        Current datetime to string
+        :param fmt: format string for output
+        :return: string for current datetime
+        """
+        return datetime.now().strftime(fmt)
+
+    @staticmethod
+    def deduplicate(seq):
+        """
+        Deduplicate list
+        :param seq: list to deduplicate
+        :return: deduplicated list
+        """
+        seen = set()
+        seen_add = seen.add
+        return [x for x in seq if not (x in seen or seen_add(x))]
+
+    @staticmethod
+    def host_to_url(host):
+        if host.lower().startswith('http'):
+            return host
+        else:
+            for p in [443, 8443]:
+                if ':%i' % p in host:
+                    return 'https://%s' % host
+
+            return 'http://%s' % host
+
+    @staticmethod
+    def hosts_to_domain_dict(hosts):
+        domains = [helper.url_to_domain(host) for host in hosts]
+        return dict(map(lambda d: (helper.domain_to_ip(d), d), domains))
+
+    @staticmethod
+    def hosts_to_port_dict(hosts):
+        ports_dict = {}
+        for host, port in [helper.parse_url(host) for host in hosts]:
+            if port in ports_dict:
+                ports_dict[port].append(helper.url_to_ip(host))
+            else:
+                ports_dict[port] = [helper.url_to_ip(host)]
+
+        return ports_dict
+
+    @staticmethod
+    def parse_url(url):
+        parsed = urlsplit(url)
+        return parsed[1].split(':')[0] if '://' in url else url, parsed.port
+
+    @staticmethod
+    def url_to_ip(url):
+        return helper.domain_to_ip(helper.url_to_domain(url))
+
+    @staticmethod
+    def generate_url(host, port):
+        domain = helper.url_to_domain(host) if '://' in host else host
+        prefix = 'https://' if port in [443, 8443] else 'http://'
+        return '%s%s:%i' % (prefix, domain, port)
+
+    @staticmethod
+    def url_to_domain(url):
+        return urlsplit(url)[1].split(':')[0] if '://' in url else url
+        # domain = urlparse.urlsplit(url)[1].split(':')[0]
+        # if '://' not in url:
+        # return url
+        # else:
+        #     return url.split('://')[1].split('/')[0]
+
+    @staticmethod
+    def domain_to_ip(domain):
+        return socket.gethostbyname(domain)
+
+    @staticmethod
+    def domain_to_ip_list(domain):
+        from dns import resolver
+        answers = resolver.query(domain, 'A')
+        return [rdata for rdata in answers]
+
+    @staticmethod
+    def ping_host(host, timeout=1):
+        return sr1(IP(dst=host)/ICMP(), timeout=timeout) is not None
+
+    @staticmethod
+    def scan_host(host, port, timeout=0.5):
+        return sr1(IP(dst=host)/TCP(sport=RandShort(), dport=port, flags="S"), timeout=timeout) is not None
+
+    @staticmethod
+    def scan_url(url, timeout=0.5):
+        parsed = urlsplit(url)
+        host = parsed[1].split(':')[0] if '://' in url else url
+        return sr1(IP(dst=host)/TCP(sport=RandShort(), dport=parsed.port, flags="S"), timeout=timeout) is not None
+
+    @staticmethod
+    def icmp_scan(hosts, timeout=3, http_prefix=True):
+        domains_dict = helper.hosts_to_domain_dict(hosts)
+        ips = [ip for ip in domains_dict.keys()]
+        a, u = sr(IP(dst=ips) / ICMP(), timeout=timeout, retry=3)
+        # domain names without http prefix
+        available = [domains_dict[rcv[IP].src] for snd, rcv in a]
+        return filter(lambda d: helper.url_to_domain(d) in available, hosts) if http_prefix else available
+
+    @staticmethod
+    def syn_scan(hosts, ports=None, timeout=3, http_prefix=True):
+        domains = helper.hosts_to_domain_dict(hosts)
+        available = {}
+
+        def parse_answered(answered):
+            for snd, rcv in answered:
+                if rcv[TCP].flags != 'SA':
+                    continue
+
+                if rcv[IP].src in available:
+                    available[rcv[IP].src] = [rcv[TCP].sport]
+                else:
+                    available[rcv[IP].src].append(rcv[TCP].sport)
+
+        if ports is None:
+            ports_dict = helper.hosts_to_port_dict(hosts)
+            for port in ports_dict.keys():
+                a = sr(IP(dst=ports_dict[port])/TCP(sport=RandShort(), dport=port, flags="S"), timeout=timeout)[0]
+                parse_answered(a)
+        else:
+            a = sr(IP(dst=[ip for ip in domains.keys()])/TCP(sport=RandShort(), dport=ports, flags="S"), timeout=timeout)[0]
+            parse_answered(a)
+
+        # return available host:ports dict
+        if not http_prefix:
+            return available
+
+        # generate url list
+        urls = []
+        for ip in available.keys():
+            urls.extend([helper.generate_url(domains[ip], port) for port in available[ip]])
+        return urls
+
+
 class HttpScanner(object):
     def __init__(self, args):
         """
@@ -455,13 +465,26 @@ class HttpScanner(object):
         # Reading files
         self.output.write_log("Reading files and deduplicating.", logging.INFO)
         self.hosts = self._file_to_list(args.hosts)
-        if self.args.ports is None and not self.args.syn:
+        self.urls = self._file_to_list(args.urls)
+
+        #
+        self._calc_urls()
+        out = 'Loaded %i hosts %i urls' % (self.hosts_count, self.urls_count)
+        if self.args.ports is not None:
+            out += ' %i ports' % len(self.args.ports)
+        self.output.print_and_log(out)
+
+        if self.args.ports is not None and not self.args.syn:
             new_hosts = []
             for host in self.hosts:
                 for port in self.args.ports:
+                    # print(host, port)
                     new_hosts.append(helper.generate_url(host, port))
             self.hosts = new_hosts
-        self.urls = self._file_to_list(args.urls)
+
+        #
+        self._calc_urls()
+        self.output.print_and_log('%i full urls to scan' % self.full_urls_count)
 
         # Queue and workers
         self.hosts_queue = JoinableQueue()
@@ -605,6 +628,7 @@ class HttpScanner(object):
             full_url = urljoin(host_url, url)
             r = self.scan_url(full_url, head_available)
             urls_scanned += 1
+            self.output.urls_scanned += 1
 
             # Output
             r['worker'] = worker_id
@@ -702,6 +726,7 @@ class HttpScanner(object):
         self.urls_count = len(self.urls)
         self.hosts_count = len(self.hosts)
         self.full_urls_count = len(self.urls) * len(self.hosts)
+        self.output.args.urls_count = self.full_urls_count
 
     def start(self):
         """
@@ -712,10 +737,6 @@ class HttpScanner(object):
         gevent.signal(signal.SIGTERM, self.signal_handler)
         gevent.signal(signal.SIGINT, self.signal_handler)
         gevent.signal(signal.SIGQUIT, self.signal_handler)
-
-        self._calc_urls()
-        self.output.print_and_log(
-            'Loaded %i hosts %i urls. %i full urls to scan' % (self.hosts_count, self.urls_count, self.full_urls_count))
 
         # ICMP scan
         if self.args.icmp:
