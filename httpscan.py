@@ -215,7 +215,7 @@ class HttpScannerOutput(object):
         # TODO: make separate queues for fast logging
         self.args = args
         self.lock = RLock()
-        # self.log_lock = RLock()
+
         # Colorama init
         init()
         # Initialise logging
@@ -476,8 +476,8 @@ class HttpScanner(object):
 
         # Reading urls file
         urls = helper.file_to_list(args.urls)
-        if hosts is None:
-            self.output.print_and_log('Urls file %s not found!' % args.hosts, logging.ERROR)
+        if urls is None:
+            self.output.print_and_log('Urls file %s not found!' % args.urls, logging.ERROR)
             exit(-1)
         self.urls = urls
 
