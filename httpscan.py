@@ -274,8 +274,8 @@ class HttpScannerOutput(object):
     def _write_db(self, **kwargs):
         if self.engine is None:
             return
+
         # TODO: check if url exists in table
-        self.scan_table.insert()
         params = self._kwargs_to_params(**kwargs)
         self.engine.execute(self.scan_table.insert().execution_options(autocommit=True), params)
 
