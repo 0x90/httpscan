@@ -384,7 +384,10 @@ class helper(object):
 
     @staticmethod
     def domain_to_ip(domain):
-        return socket.gethostbyname(domain)
+        try:
+            return socket.gethostbyname(domain)
+        except:
+            return None
 
     @staticmethod
     def domain_to_ip_list(domain):
@@ -614,6 +617,13 @@ class HttpScanner(object):
             return False
 
     def scan_host(self, worker_id, host):
+        # check if resolvable
+        ip = helper.url_to_ip(host)
+        if ip is None:
+            self.output.write_log('Could not resolve %s  Skipping...' % host, logging.WARNING)
+            self.output.urls_scanned += len(self.urls)
+            return
+
         # Check for HEAD
         host_url = helper.host_to_url(host)
         head_available = False
