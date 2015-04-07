@@ -568,8 +568,9 @@ class HttpScanner(object):
             self.session.auth = (items[0], items[1])
 
         # Cookies
+        self.cookies = None
         if self.args.cookies is not None:
-            self.session.cookies = Cookies.from_request(self.args.cookies)
+            self.cookies = Cookies.from_request(self.args.cookies)
 
         # Cookies from file
         if self.args.load_cookies is not None:
@@ -577,9 +578,10 @@ class HttpScanner(object):
                 self.output.print_and_log('Could not find cookie file: %s' % self.args.load_cookies, logging.ERROR)
                 exit(-1)
 
-            cj = MozillaCookieJar(self.args.load_cookies)
-            cj.load()
-            self.session.cookies = cj
+            self.cookies = MozillaCookieJar(self.args.load_cookies)
+            self.cookies.load()
+
+        self.session.cookies = self.cookies
 
         # User-Agent
         self.ua = UserAgent() if self.args.random_agent else None
@@ -717,6 +719,11 @@ class HttpScanner(object):
         except Exception as ex:
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
             exception = ex
+
+        # cookies bugfix?
+        print('cookies: %s' % self.cookies)
+        print('session.cookies: %s' % self.session.cookies)
+        self.session.cookies = self.cookies
 
         return self._parse_response(url, response, exception)
 
