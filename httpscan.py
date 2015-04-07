@@ -568,7 +568,7 @@ class HttpScanner(object):
             self.session.auth = (items[0], items[1])
 
         # Cookies
-        self.cookies = None
+        self.cookies = {}
         if self.args.cookies is not None:
             self.cookies = Cookies.from_request(self.args.cookies)
 
@@ -651,7 +651,10 @@ class HttpScanner(object):
             if self.args.skip is not None and errors_count == self.args.skip:
                 self.output.write_log('Errors limit reached on %s Skipping other urls.' % host, logging.WARNING)
                 self.output.urls_scanned += len(self.urls) - urls_scanned
-                return
+                break
+
+        # cookies bugfix?
+        self.session.cookies.clear()
 
     def _fill_headers(self):
         # Fill UserAgent in headers
@@ -720,10 +723,10 @@ class HttpScanner(object):
             self.output.write_log('Unknown exception while quering %s' % url, logging.ERROR)
             exception = ex
 
-        # cookies bugfix?
-        print('cookies: %s' % self.cookies)
+
+        # print('cookies: %s' % self.cookies)
         print('session.cookies: %s' % self.session.cookies)
-        self.session.cookies = self.cookies
+        # self.session.cookies = self.cookies
 
         return self._parse_response(url, response, exception)
 
